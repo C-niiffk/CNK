@@ -5,10 +5,14 @@ import org.springframework.stereotype.Repository;
 
 import java.util.*;
 
+/** Query Database **/
+
 @Repository
 class DBUtils {
   private final JdbcTemplate jdbc;
+
   DBUtils(JdbcTemplate jdbc) {this.jdbc = jdbc;}
+
   List<Map<String,Object>> query(String sql,Object...args){
     return jdbc.query(sql,(rs,row)->{
       Map<String,Object> out=new LinkedHashMap<>();

@@ -1,6 +1,8 @@
 spring:
   application:
     name: frontend-service
+  lifecycle:
+    timeout-per-shutdown-phase: 100s
   datasource:
     url: ${DB_URL}
     username: ${DB_USER}
@@ -14,28 +16,29 @@ spring:
       max-lifetime: 600000
       connection-init-sql: "ALTER SESSION SET TIME_ZONE='+00:00'"
       data-source-properties:
-        "oracle.net.CONNECT_TIMEOUT": 5000
-        "oracle.jdbc.ReadTimeout": 15000
-        "oracle.net.encryption_client": REQUIRED
-        "oracle.net.encryption_types_client": (AES256)
-        "oracle.net.crypto_checksum_client": REQUIRED
-        "oracle.net.crypto_checksum_types_client": (SHA256)
+        oracle.net.CONNECT_TIMEOUT: 5000
+        oracle.jdbc.ReadTimeout: 15000
+        oracle.net.encryption_client: REQUIRED
+        oracle.net.encryption_types_client: (AES256)
+        oracle.net.crypto_checksum_client: REQUIRED
+        oracle.net.crypto_checksum_types_client: (SHA256)
   jdbc:
     template:
       query-timeout: 10s
-  lifecycle:
-    timeout-per-shutdown-phase: 100s
 server:
   port: ${PORT:8080}
   address: ${BIND_ADDRESS:0.0.0.0}
   shutdown: graceful
   tomcat:
-    basedir: /tmp/tomcat
+    basedir: /tmp/tomcat-frontend
     max-http-form-post-size: 8KB
     max-swallow-size: 8KB
     threads:
       max: 16
       min-spare: 2
+  error:
+    include-message: never
+    include-stacktrace: never
 management:
   endpoints:
     web:
@@ -45,6 +48,14 @@ management:
   endpoint:
     health:
       show-details: never
-  health:
-    db:
-      enabled: false
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db
+batch:
+  secure-cookie: ${COOKIE_SECURE:false}
+  internal-token: ${INTERNAL_TOKEN}
+  ui-user: ${UI_USER:operator}
+  ui-password: ${UI_PASSWORD}
+  backend-url: ${BACKEND_URL}

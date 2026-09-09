@@ -1,14 +1,142 @@
-<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Batch Platform</title>
-<style>body{font:16px system-ui;max-width:1200px;margin:40px auto;padding:0 24px;color:#172a3a;background:#f4f7fa}h1{margin-bottom:8px}form,section{background:white;padding:24px;border-radius:12px;margin:24px 0}label{display:inline-block;margin:8px}input,select,button{font:inherit;padding:8px;border:1px solid #bbc9d6;border-radius:5px}button{background:#153e65;color:white;cursor:pointer}table{border-collapse:collapse;width:100%;font-size:13px}td,th{padding:10px;text-align:left;border-bottom:1px solid #ddd;overflow-wrap:anywhere}pre{white-space:pre-wrap}small{color:#526778}.scroll{overflow:auto}</style>
-<h1>Batch Platform</h1><p>Oracle 作業佇列 · ECS Fargate · SH / API</p>
-<form id="job"><label>Application <select name="app"><option>app1</option><option>app2</option></select></label><label>類型 <select name="type"><option>SH</option><option>API</option></select></label><label>作業 <select name="name"><option>reconcile</option></select></label><label>業務日期 <input type="date" name="businessDate" required></label><br><label>Request key <input name="requestKey" size="45" pattern="[A-Za-z0-9_-]{8,100}" required></label><button type="submit">提交作業</button> <button type="button" id="newkey">新 Request key</button><p><small>網路失敗請保留原 key 重試。同 key、同內容會返回原作業。UNKNOWN 必須先核實業務結果。</small></p><pre id="notice"></pre></form>
-<section><button id="refresh">重新整理</button><p>最近 100 筆，每 5 秒更新（時間為 UTC）</p><div class="scroll"><table><thead><tr><th>ID</th><th>App / 類型</th><th>日期</th><th>狀態</th><th>結果</th></tr></thead><tbody id="rows"></tbody></table></div></section>
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Batch Platform</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font: 16px system-ui, sans-serif; max-width: 1200px; margin: 36px auto; padding: 0 20px; color: #172a3a; background: #f4f7fa; }
+    h1 { margin-bottom: 8px; }
+    form, section { background: white; padding: 24px; border-radius: 12px; margin: 24px 0; }
+    .fields { display: flex; flex-wrap: wrap; gap: 16px; }
+    label { display: flex; flex-direction: column; gap: 6px; }
+    input, select, button { font: inherit; padding: 9px 12px; border: 1px solid #bbc9d6; border-radius: 6px; }
+    button { background: #153e65; color: white; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: wait; }
+    .secondary { color: #153e65; background: white; }
+    .key { margin: 20px 0; max-width: 560px; }
+    table { border-collapse: collapse; width: 100%; font-size: 13px; }
+    td, th { padding: 12px 10px; text-align: left; border-bottom: 1px solid #e1e7ed; overflow-wrap: anywhere; }
+    th { color: #526778; white-space: nowrap; }
+    pre { white-space: pre-wrap; }
+    small, .muted { color: #526778; }
+    .scroll { overflow-x: auto; }
+    .status { font-weight: 700; }
+    .SUCCEEDED { color: #186642; }
+    .FAILED, .UNKNOWN { color: #a22b24; }
+    .RUNNING { color: #1356a0; }
+    .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  </style>
+</head>
+<body>
+<h1>Batch Platform</h1>
+<p class="muted">提交批量作業，查看執行狀態與對賬結果。</p>
+<form id="job">
+  <div class="fields">
+    <label>Application <select name="app"><option>app1</option><option>app2</option></select></label>
+    <label>執行方式 <select name="type"><option value="SH">SH 腳本</option><option value="API">API 調用</option></select></label>
+    <label>作業 <select name="name"><option value="reconcile">reconcile 對賬</option></select></label>
+    <label>業務日期 <input type="date" name="businessDate" required></label>
+  </div>
+  <label class="key">請求識別碼（Request key）
+    <input name="requestKey" pattern="[A-Za-z0-9_-]{8,100}" maxlength="100" required>
+  </label>
+  <button type="submit" id="submit">提交作業</button>
+  <button type="button" class="secondary" id="newkey">建立新作業識別碼</button>
+  <p><small>同一筆作業重試時保留識別碼；提交另一筆作業時建立新識別碼。UNKNOWN 需先核實業務結果。</small></p>
+  <pre id="notice" role="status" aria-live="polite"></pre>
+</form>
+
+<section>
+  <div class="toolbar">
+    <div><strong>最近的作業</strong><p class="muted">最近 100 筆，每 5 秒更新</p></div>
+    <button type="button" class="secondary" id="refresh">重新整理</button>
+  </div>
+  <p id="list-notice" role="status" aria-live="polite"></p>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>作業 ID</th><th>App / 類型</th><th>業務日期</th><th>狀態</th><th>結果</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+</section>
 <script>
-  const form=document.querySelector('#job'),notice=document.querySelector('#notice');
-  function newKey(){form.elements.requestKey.value=crypto.randomUUID()}
-  newKey();form.elements.businessDate.value=new Date().toISOString().slice(0,10);
-  document.querySelector('#newkey').onclick=newKey;
-  async function refresh(){try{let r=await fetch('/api/jobs');if(!r.ok)throw new Error('HTTP '+r.status);let jobs=await r.json();const rows=document.querySelector('#rows');rows.replaceChildren();for(const j of jobs){let tr=document.createElement('tr');for(const v of [j.id,j.app+' / '+j.job_type,j.business_date,j.status,j.result||'']){let td=document.createElement('td');td.textContent=v;tr.append(td)}rows.append(tr)}}catch(e){notice.textContent='讀取失敗：'+e.message}}
-  form.onsubmit=async e=>{e.preventDefault();try{let r=await fetch('/api/jobs',{method:'POST',headers:{'X-Batch-Request':'1'},body:new URLSearchParams(new FormData(form))});let result=await r.json();if(!r.ok)throw new Error(JSON.stringify(result));notice.textContent='已受理：'+result.id+'；新作業請產生新的 Request key。';refresh()}catch(err){notice.textContent='提交結果不明或被拒絕：'+err.message+'；請保留 key 查詢或重試。'}};
-  document.querySelector('#refresh').onclick=refresh;refresh();setInterval(refresh,5000);
-</script></html>
+  const form = document.querySelector('#job');
+  const notice = document.querySelector('#notice');
+  const listNotice = document.querySelector('#list-notice');
+  const submitButton = document.querySelector('#submit');
+  let refreshing = false;
+
+  function newKey() {
+    form.elements.requestKey.value = crypto.randomUUID();
+  }
+  newKey();
+  const today = new Date();
+  form.elements.businessDate.value = [
+    today.getFullYear(), String(today.getMonth() + 1).padStart(2, '0'),
+    String(today.getDate()).padStart(2, '0')
+  ].join('-');
+
+  async function refresh() {
+    if (refreshing) return;
+    refreshing = true;
+    try {
+      const response = await fetch('/api/jobs');
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      const jobs = await response.json();
+      const rows = document.querySelector('#rows');
+      rows.replaceChildren();
+      for (const job of jobs) {
+        const tr = document.createElement('tr');
+        const values = [job.id, job.app + ' / ' + job.job_type,
+                        job.business_date, job.status, job.result || '—'];
+        values.forEach((value, index) => {
+          const td = document.createElement('td');
+          // 使用 textContent，避免把腳本輸出或資料庫內容當成 HTML。
+          td.textContent = value;
+          if (index === 3) td.className = 'status ' + job.status;
+          tr.append(td);
+        });
+        rows.append(tr);
+      }
+      listNotice.textContent = jobs.length ? '' : '目前沒有作業，請先提交一筆。';
+    } catch (error) {
+      listNotice.textContent = '讀取失敗：' + error.message;
+    } finally {
+      refreshing = false;
+    }
+  }
+
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    submitButton.disabled = true;
+    notice.textContent = '正在提交…';
+    try {
+      // Spring Security 的 CSRF cookie 不依賴單一 ECS Task 的 Session。
+      const tokenResponse = await fetch('/api/csrf');
+      if (!tokenResponse.ok) throw new Error('無法取得 CSRF token：HTTP ' + tokenResponse.status);
+      const csrf = await tokenResponse.json();
+      const response = await fetch('/api/jobs', {
+        method: 'POST',
+        headers: { [csrf.headerName]: csrf.token },
+        body: new URLSearchParams(new FormData(form))
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'HTTP ' + response.status);
+      notice.textContent = '已受理：' + result.id + '。執行狀態請查看下表。';
+      await refresh();
+    } catch (error) {
+      notice.textContent = '提交未確認：' + error.message + '。請保留原識別碼查詢或重試。';
+    } finally {
+      submitButton.disabled = false;
+    }
+  });
+
+  document.querySelector('#newkey').addEventListener('click', newKey);
+  document.querySelector('#refresh').addEventListener('click', refresh);
+  refresh();
+  setInterval(refresh, 5000);
+</script>
+</body>
+</html>
