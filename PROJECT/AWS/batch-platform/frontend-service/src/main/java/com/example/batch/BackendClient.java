@@ -34,7 +34,7 @@ class BackendClient {
     client = RestClient.builder()
       .baseUrl(baseUrl)
       .requestFactory(factory)
-      .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer" + token)
+      .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + token)
       .build();
   }
 

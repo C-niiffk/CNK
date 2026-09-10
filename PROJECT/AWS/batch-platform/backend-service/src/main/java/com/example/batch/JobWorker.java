@@ -15,7 +15,7 @@ import java.util.Set;
 @Component
 class JobWorker {
   private static final Logger log = LoggerFactory.getLogger(JobWorker.class);
-  private static final Set<String> FINAL_STATES = Set.of("SUCCESS", "FAILURE", "UNKNOWN");
+  private static final Set<String> FINAL_STATES = Set.of("SUCCEEDED", "FAILED", "UNKNOWN");
   private final JobDao jobDao;
   private final AgentClient client;
   public final Map<String, String> agents;
@@ -45,7 +45,7 @@ class JobWorker {
 
   void execute(Map<String, Object> job) {
     String id = job.get("id").toString();
-    String status = "UNKNOW";
+    String status = "UNKNOWN";
     String detail = "Dispatch outcome unknown";
 
     try {
