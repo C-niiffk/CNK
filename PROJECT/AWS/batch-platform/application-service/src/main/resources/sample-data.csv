@@ -1,0 +1,4 @@
+reference,expected_cents,actual_cents
+PAY001,12000,12000
+PAY002,8000,8000
+PAY003,5000,5000

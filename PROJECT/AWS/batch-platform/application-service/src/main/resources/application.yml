@@ -1,0 +1,38 @@
+spring:
+  application:
+    name: application-service
+  lifecycle:
+    timeout-per-shutdown-phase: 100s
+server:
+  port: ${PORT:8082}
+  address: ${BIND_ADDRESS:127.0.0.1}
+  shutdown: graceful
+  tomcat:
+    basedir: /tmp/tomcat-application
+    max-http-form-post-size: 8KB
+    max-swallow-size: 8KB
+    threads:
+      max: 16
+      min-spare: 2
+  error:
+    include-message: never
+    include-stacktrace: never
+management:
+  endpoints:
+    web:
+      base-path: /
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState
+batch:
+  internal-token: ${INTERNAL_TOKEN}
+  app-id: ${APP_ID}
+  input-file: ${INPUT_FILE:classpath:sample-data.csv}
+  work-directory: ${WORK_DIR:/work}

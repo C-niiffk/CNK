@@ -22,6 +22,7 @@
     <module>frontend-service</module>
     <module>backend-service</module>
     <module>agent-service</module>
+    <module>application-service</module>
   </modules>
 
   <!-- Four independent executables; no shared Java module is needed. -->
