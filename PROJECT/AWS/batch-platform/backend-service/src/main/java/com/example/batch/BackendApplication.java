@@ -7,13 +7,13 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 
 @EnableScheduling
 @SpringBootApplication(exclude = UserDetailsServiceAutoConfiguration.class)
-public class BackendService {
+public class BackendApplication {
   public static void main(String[] args) throws Exception {
 
     if (args.length == 1 && "init-db".equals(args[0])) {
       DBInitializer.initialize();
       return;
     }
-    SpringApplication.run(BackendService.class, args);
+    SpringApplication.run(BackendApplication.class, args);
   }
 }
