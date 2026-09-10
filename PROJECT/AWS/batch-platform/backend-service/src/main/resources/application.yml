@@ -1,0 +1,66 @@
+spring:
+  application:
+    name: backend-service
+  lifecycle:
+    timeout-per-shutdown-phase: 100s
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+    driver-class-name: oracle.jdbc.OracleDriver
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 0
+      connection-timeout: 5000
+      initialization-fail-timeout: -1
+      max-lifetime: 600000
+      connection-init-sql: "ALTER SESSION SET TIME_ZONE='+00:00'"
+      data-source-properties:
+        oracle.net.CONNECT_TIMEOUT: 5000
+        oracle.jdbc.ReadTimeout: 15000
+        oracle.net.encryption_client: REQUIRED
+        oracle.net.encryption_types_client: (AES256)
+        oracle.net.crypto_checksum_client: REQUIRED
+        oracle.net.crypto_checksum_types_client: (SHA256)
+  jdbc:
+    template:
+      query-timeout: 10s
+  task:
+    scheduling:
+      pool:
+        size: 2
+      shutdown:
+        await-termination: true
+        await-termination-period: 100s
+server:
+  port: ${PORT:8081}
+  address: ${BIND_ADDRESS:0.0.0.0}
+  shutdown: graceful
+  tomcat:
+    basedir: /tmp/tomcat-backend
+    max-http-form-post-size: 8KB
+    max-swallow-size: 8KB
+    threads:
+      max: 16
+      min-spare: 2
+  error:
+    include-message: never
+    include-stacktrace: never
+management:
+  endpoints:
+    web:
+      base-path: /
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db
+batch:
+  internal-token: ${INTERNAL_TOKEN}
+  agent-app1-url: ${AGENT_APP1_URL}
+  agent-app2-url: ${AGENT_APP2_URL}
