@@ -1,0 +1,13 @@
+region = "us-east-1"
+project = "batch-platform"
+environment = "lab"
+domain_name = "batch.example.com"
+hosted_zone_id = "Z_REPLACE_ME"
+allowed_cidrs = ["203.0.113.10/32"] #REPLACE
+oracle_engine_version = "REPLACE_WITH_CLI_DISCOVERY_RESULT"
+db_instance_class = "db.t3.small"
+image_tag = "jdk21-v1"
+deploy_services = false
+protect_data = true
+final_snapshot_identifier = "batch-platform-lab-final"
+alarm_email = ""

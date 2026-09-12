@@ -56,7 +56,7 @@ variable "oracle_engine_version" {
 }
 variable "db_instance_class" {
   type = string
-  default = "db.m6i.large"
+  default = "db.t3.small"
 }
 variable "image_tag" {
   type = string
