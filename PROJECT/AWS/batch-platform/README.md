@@ -1,1 +1,1 @@
-# CNK
+# batch-platform
