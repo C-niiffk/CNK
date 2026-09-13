@@ -22,17 +22,35 @@ variable "vpc_cidr" {
   type = string
   default = "10.42.0.0/16"
 }
-variable "domain_name" {
-  type = string
-  description = "FQDN in an existing publicly delegated Route53 hosted zone; e.g. batch.example.com"
+variable "use_custom_domain" {
+  type        = bool
+  default     = false
+  description = "Set true to use Route53 + ACM + HTTPS custom domain. Set false to use public ALB DNS over HTTP for lab deployment."
 }
+variable "domain_name" {
+  type        = string
+  default     = ""
+  description = "Optional custom domain, e.g. batch.example.com. Required only when use_custom_domain=true."
+
+  validation {
+    condition     = !var.use_custom_domain || length(trimspace(var.domain_name)) > 0
+    error_message = "domain_name is required when use_custom_domain=true."
+  }
+}
+
 variable "hosted_zone_id" {
-  type = string
-  description = "Existing public Route53 hosted zone ID in this AWS account"
+  type        = string
+  default     = ""
+  description = "Optional public Route53 hosted zone ID. Required only when use_custom_domain=true."
+
+  validation {
+    condition     = !var.use_custom_domain || length(trimspace(var.hosted_zone_id)) > 0
+    error_message = "hosted_zone_id is required when use_custom_domain=true."
+  }
 }
 variable "allowed_cidrs" {
   type = list(string)
-  description = "Trusted public IPv4 egress CIDRs allowed into HTTPS ALB"
+  description = "Trusted public IPv4 egress CIDRs allowed into the public ALB"
 
   validation {
     condition = (

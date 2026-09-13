@@ -1,9 +1,11 @@
 region = "us-east-1"
 project = "batch-platform"
 environment = "lab"
-domain_name = "batch.example.com"
-hosted_zone_id = "Z_REPLACE_ME"
-allowed_cidrs = ["203.0.113.10/32"] #REPLACE
+use_custom_domain = false
+# Required only when use_custom_domain = true
+domain_name = ""
+hosted_zone_id = ""
+allowed_cidrs = ["203.0.113.10/32"] # REPLACE with your real trusted public IP
 oracle_engine_version = "REPLACE_WITH_CLI_DISCOVERY_RESULT"
 db_instance_class = "db.t3.small"
 image_tag = "jdk21-v1"

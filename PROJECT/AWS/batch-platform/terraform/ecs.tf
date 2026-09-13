@@ -66,7 +66,7 @@ resource "aws_ecs_task_definition" "core" {
     ], each.key == "frontend" ? [
       { name = "BACKEND_URL", value = "http://${aws_lb.main["internal"].dns_name}:8081" },
       { name = "UI_USER", value = "operator" },
-      { name = "COOKIE_SECURE", value = "true" }
+      { name = "COOKIE_SECURE", value = var.use_custom_domain ? "true" : "false" }
     ] : [
       { name = "AGENT_APP1_URL", value = "http://app1-agent:8090" },
       { name = "AGENT_APP2_URL", value = "http://app2-agent:8090" }

@@ -92,12 +92,12 @@ resource "aws_vpc_security_group_egress_rule" "https" {
   description = "ECR, Secrets Manager and CloudWatch via NAT"
 }
 resource "aws_vpc_security_group_ingress_rule" "public" {
-  for_each = {for i, c in var.allowed_cidrs : tostring(i) => c}
-  cidr_ipv4 = each.value
+  for_each          = { for i, c in var.allowed_cidrs : tostring(i) => c }
+  cidr_ipv4         = each.value
   security_group_id = aws_security_group.tier["public-alb"].id
-  ip_protocol = "tcp"
-  from_port = 443
-  to_port = 443
+  ip_protocol       = "tcp"
+  from_port         = var.use_custom_domain ? 443 : 80
+  to_port           = var.use_custom_domain ? 443 : 80
 }
 locals {
   flows = {

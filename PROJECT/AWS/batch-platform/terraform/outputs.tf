@@ -1,5 +1,8 @@
 output "url" {
-  value = "https://${var.domain_name}"
+  value = var.use_custom_domain ? "https://${var.domain_name}" : "http://${aws_lb.main["public"].dns_name}"
+}
+output "public_alb_dns_name" {
+  value = aws_lb.main["public"].dns_name
 }
 output "cluster_name" {
   value = aws_ecs_cluster.main.name
