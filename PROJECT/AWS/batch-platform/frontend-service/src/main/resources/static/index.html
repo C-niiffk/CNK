@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-Hant">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -15,7 +15,6 @@
     button { background: #153e65; color: white; cursor: pointer; }
     button:disabled { opacity: .5; cursor: wait; }
     .secondary { color: #153e65; background: white; }
-    .key { margin: 20px 0; max-width: 560px; }
     table { border-collapse: collapse; width: 100%; font-size: 13px; }
     td, th { padding: 12px 10px; text-align: left; border-bottom: 1px solid #e1e7ed; overflow-wrap: anywhere; }
     th { color: #526778; white-space: nowrap; }
@@ -31,36 +30,65 @@
 </head>
 <body>
 <h1>Batch Platform</h1>
-<p class="muted">提交批量作業，查看執行狀態與對賬結果。</p>
+<p class="muted">Submit batch jobs and view execution status and reconciliation results.</p>
+
 <form id="job">
+  <input type="hidden" name="name" value="reconcile">
+  <input type="hidden" name="requestKey">
+
   <div class="fields">
-    <label>Application <select name="app"><option>app1</option><option>app2</option></select></label>
-    <label>執行方式 <select name="type"><option value="SH">SH 腳本</option><option value="API">API 調用</option></select></label>
-    <label>作業 <select name="name"><option value="reconcile">reconcile 對賬</option></select></label>
-    <label>業務日期 <input type="date" name="businessDate" required></label>
+    <label>Application
+      <select name="app">
+        <option>app1</option>
+        <option>app2</option>
+      </select>
+    </label>
+
+    <label>Execution Mode
+      <select name="type">
+        <option value="SH">SH Script</option>
+        <option value="API">API Call</option>
+      </select>
+    </label>
+
+    <label>Business Date
+      <input type="date" name="businessDate" required>
+    </label>
   </div>
-  <label class="key">請求識別碼（Request key）
-    <input name="requestKey" pattern="[A-Za-z0-9_-]{8,100}" maxlength="100" required>
-  </label>
-  <button type="submit" id="submit">提交作業</button>
-  <button type="button" class="secondary" id="newkey">建立新作業識別碼</button>
-  <p><small>同一筆作業重試時保留識別碼；提交另一筆作業時建立新識別碼。UNKNOWN 需先核實業務結果。</small></p>
+
+  <p><small>A unique request key is generated automatically for each submitted job.</small></p>
+
+  <button type="submit" id="submit">Submit Job</button>
   <pre id="notice" role="status" aria-live="polite"></pre>
 </form>
 
 <section>
   <div class="toolbar">
-    <div><strong>最近的作業</strong><p class="muted">最近 100 筆，每 5 秒更新</p></div>
-    <button type="button" class="secondary" id="refresh">重新整理</button>
+    <div>
+      <strong>Recent Jobs</strong>
+      <p class="muted">Latest 100 records, refreshed every 5 seconds</p>
+    </div>
+    <button type="button" class="secondary" id="refresh">Refresh</button>
   </div>
+
   <p id="list-notice" role="status" aria-live="polite"></p>
+
   <div class="scroll">
     <table>
-      <thead><tr><th>作業 ID</th><th>App / 類型</th><th>業務日期</th><th>狀態</th><th>結果</th></tr></thead>
+      <thead>
+      <tr>
+        <th>Job ID</th>
+        <th>App / Type</th>
+        <th>Business Date</th>
+        <th>Status</th>
+        <th>Result</th>
+      </tr>
+      </thead>
       <tbody id="rows"></tbody>
     </table>
   </div>
 </section>
+
 <script>
   const form = document.querySelector('#job');
   const notice = document.querySelector('#notice');
@@ -71,38 +99,51 @@
   function newKey() {
     form.elements.requestKey.value = crypto.randomUUID();
   }
+
   newKey();
+
   const today = new Date();
   form.elements.businessDate.value = [
-    today.getFullYear(), String(today.getMonth() + 1).padStart(2, '0'),
+    today.getFullYear(),
+    String(today.getMonth() + 1).padStart(2, '0'),
     String(today.getDate()).padStart(2, '0')
   ].join('-');
 
   async function refresh() {
     if (refreshing) return;
     refreshing = true;
+
     try {
       const response = await fetch('/api/jobs');
       if (!response.ok) throw new Error('HTTP ' + response.status);
+
       const jobs = await response.json();
       const rows = document.querySelector('#rows');
       rows.replaceChildren();
+
       for (const job of jobs) {
         const tr = document.createElement('tr');
-        const values = [job.id, job.app + ' / ' + job.job_type,
-                        job.business_date, job.status, job.result || '—'];
+        const values = [
+          job.id,
+          job.app + ' / ' + job.job_type,
+          job.business_date,
+          job.status,
+          job.result || '-'
+        ];
+
         values.forEach((value, index) => {
           const td = document.createElement('td');
-          // 使用 textContent，避免把腳本輸出或資料庫內容當成 HTML。
           td.textContent = value;
           if (index === 3) td.className = 'status ' + job.status;
           tr.append(td);
         });
+
         rows.append(tr);
       }
-      listNotice.textContent = jobs.length ? '' : '目前沒有作業，請先提交一筆。';
+
+      listNotice.textContent = jobs.length ? '' : 'No jobs yet. Submit one first.';
     } catch (error) {
-      listNotice.textContent = '讀取失敗：' + error.message;
+      listNotice.textContent = 'Failed to load jobs: ' + error.message;
     } finally {
       refreshing = false;
     }
@@ -111,30 +152,35 @@
   form.addEventListener('submit', async event => {
     event.preventDefault();
     submitButton.disabled = true;
-    notice.textContent = '正在提交…';
+    notice.textContent = 'Submitting...';
+
     try {
-      // Spring Security 的 CSRF cookie 不依賴單一 ECS Task 的 Session。
+      newKey();
+
       const tokenResponse = await fetch('/api/csrf');
-      if (!tokenResponse.ok) throw new Error('無法取得 CSRF token：HTTP ' + tokenResponse.status);
+      if (!tokenResponse.ok) throw new Error('Failed to get CSRF token: HTTP ' + tokenResponse.status);
+
       const csrf = await tokenResponse.json();
       const response = await fetch('/api/jobs', {
         method: 'POST',
         headers: { [csrf.headerName]: csrf.token },
         body: new URLSearchParams(new FormData(form))
       });
+
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'HTTP ' + response.status);
-      notice.textContent = '已受理：' + result.id + '。執行狀態請查看下表。';
+
+      notice.textContent = 'Accepted: ' + result.id + '. Check the table below for execution status.';
       await refresh();
     } catch (error) {
-      notice.textContent = '提交未確認：' + error.message + '。請保留原識別碼查詢或重試。';
+      notice.textContent = 'Submission failed or not confirmed: ' + error.message + '. Please check the job list or retry.';
     } finally {
       submitButton.disabled = false;
     }
   });
 
-  document.querySelector('#newkey').addEventListener('click', newKey);
   document.querySelector('#refresh').addEventListener('click', refresh);
+
   refresh();
   setInterval(refresh, 5000);
 </script>
