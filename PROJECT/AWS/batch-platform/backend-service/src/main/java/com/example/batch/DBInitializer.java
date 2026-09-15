@@ -16,7 +16,7 @@ final class DBInitializer {
   static void initialize() throws SQLException {
     String owner = VerifyProcess.required("OWNER_PASSWORD");
     String reader = VerifyProcess.required("READER_PASSWORD");
-    if (!owner.matches("[A-Za-z0-9]{32,64}") || !reader.matches("[A-Za-z0-9]{32,64}")) {
+    if (!owner.matches("[A-Za-z][A-Za-z0-9]{23}") || !reader.matches("[A-Za-z][A-Za-z0-9]{23}"))  {
       throw new IllegalArgumentException("DB passwords invalid");
     }
 

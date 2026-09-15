@@ -58,7 +58,7 @@
 
   <p><small>A unique request key is generated automatically for each submitted job.</small></p>
 
-  <button type="submit" id="submit">Submit Job</button>
+  <button type="submit" id="submit">Submit</button>
   <pre id="notice" role="status" aria-live="polite"></pre>
 </form>
 
@@ -96,8 +96,38 @@
   const submitButton = document.querySelector('#submit');
   let refreshing = false;
 
+  // Generate a UUID v4 on both HTTP and HTTPS.
+  function generateRequestKey() {
+    if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+      return window.crypto.randomUUID();
+    }
+
+    if (!window.crypto || typeof window.crypto.getRandomValues !== 'function') {
+      throw new Error('This browser does not support secure random values.');
+    }
+
+    const bytes = new Uint8Array(16);
+    window.crypto.getRandomValues(bytes);
+
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+    const hex = Array.from(
+      bytes,
+      value => value.toString(16).padStart(2, '0')
+    ).join('');
+
+    return [
+      hex.slice(0, 8),
+      hex.slice(8, 12),
+      hex.slice(12, 16),
+      hex.slice(16, 20),
+      hex.slice(20)
+    ].join('-');
+  }
+
   function newKey() {
-    form.elements.requestKey.value = crypto.randomUUID();
+    form.elements.requestKey.value = generateRequestKey();
   }
 
   newKey();
