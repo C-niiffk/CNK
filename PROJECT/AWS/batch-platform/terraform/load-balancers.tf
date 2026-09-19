@@ -2,10 +2,10 @@ resource "aws_s3_bucket" "alb_logs" {
   bucket = "${local.name}-alb-${data.aws_caller_identity.current.account_id}-${var.region}"
 }
 resource "aws_s3_bucket_public_access_block" "alb_logs" {
-  bucket = aws_s3_bucket.alb_logs.id
-  block_public_acls = true
-  block_public_policy = true
-  ignore_public_acls = true
+  bucket                  = aws_s3_bucket.alb_logs.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
   restrict_public_buckets = true
 }
 resource "aws_s3_bucket_server_side_encryption_configuration" "alb_logs" {
@@ -19,7 +19,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "alb_logs" {
 resource "aws_s3_bucket_lifecycle_configuration" "alb_logs" {
   bucket = aws_s3_bucket.alb_logs.id
   rule {
-    id = "retain-30-days"
+    id     = "retain-30-days"
     status = "Enabled"
     filter {
       prefix = ""
@@ -31,42 +31,42 @@ resource "aws_s3_bucket_lifecycle_configuration" "alb_logs" {
 }
 resource "aws_s3_bucket_policy" "alb_logs" {
   bucket = aws_s3_bucket.alb_logs.id
-  policy = jsonencode({Version = "2012-10-17", Statement = [
+  policy = jsonencode({ Version = "2012-10-17", Statement = [
     { Effect = "Allow", Principal = { Service = "logdelivery.elasticloadbalancing.amazonaws.com" }, Action = "s3:PutObject", Resource = "${aws_s3_bucket.alb_logs.arn}/AWSLogs/${data.aws_caller_identity.current.account_id}/*" },
     { Effect = "Deny", Principal = "*", Action = "s3:*", Resource = [aws_s3_bucket.alb_logs.arn, "${aws_s3_bucket.alb_logs.arn}/*"], Condition = { Bool = { "aws:SecureTransport" = "false" } } }
   ] })
 }
 resource "aws_lb" "main" {
-  for_each = toset(["public", "internal"])
-  name = "${local.name}-${each.key == "public" ? "pub" : "int"}"
-  internal = each.key == "internal"
-  load_balancer_type = "application"
-  subnets = each.key == "public" ? aws_subnet.public[*].id : aws_subnet.private[*].id
-  security_groups = [aws_security_group.tier["${each.key}-alb"].id]
+  for_each                   = toset(["public", "internal"])
+  name                       = "${local.name}-${each.key == "public" ? "pub" : "int"}"
+  internal                   = each.key == "internal"
+  load_balancer_type         = "application"
+  subnets                    = each.key == "public" ? aws_subnet.public[*].id : aws_subnet.private[*].id
+  security_groups            = [aws_security_group.tier["${each.key}-alb"].id]
   enable_deletion_protection = var.protect_data
   drop_invalid_header_fields = true
-  idle_timeout = 120
+  idle_timeout               = 120
   access_logs {
-    bucket = aws_s3_bucket.alb_logs.id
+    bucket  = aws_s3_bucket.alb_logs.id
     enabled = true
   }
   depends_on = [aws_s3_bucket_policy.alb_logs]
 }
 resource "aws_lb_target_group" "main" {
-  for_each = {frontend = 8080, backend = 8081}
-  name = "${local.name}-${each.key == "frontend" ? "fe" : "be"}"
-  vpc_id = aws_vpc.main.id
-  protocol = "HTTP"
-  port = each.value
-  target_type = "ip"
+  for_each             = { frontend = 8080, backend = 8081 }
+  name                 = "${local.name}-${each.key == "frontend" ? "fe" : "be"}"
+  vpc_id               = aws_vpc.main.id
+  protocol             = "HTTP"
+  port                 = each.value
+  target_type          = "ip"
   deregistration_delay = 30
   health_check {
-    path = "/health/readiness"
-    healthy_threshold = 2
+    path                = "/health/readiness"
+    healthy_threshold   = 2
     unhealthy_threshold = 3
-    interval = 30
-    timeout = 5
-    matcher = "200"
+    interval            = 30
+    timeout             = 5
+    matcher             = "200"
   }
 }
 resource "aws_acm_certificate" "public" {
@@ -89,7 +89,7 @@ resource "aws_route53_record" "validation" {
   allow_overwrite = true
 }
 resource "aws_acm_certificate_validation" "public" {
-  count = var.use_custom_domain ? 1 : 0
+  count                   = var.use_custom_domain ? 1 : 0
   certificate_arn         = aws_acm_certificate.public[0].arn
   validation_record_fqdns = [aws_route53_record.validation[0].fqdn]
 }
@@ -107,10 +107,10 @@ resource "aws_lb_listener" "public" {
 }
 resource "aws_lb_listener" "internal" {
   load_balancer_arn = aws_lb.main["internal"].arn
-  port = 8081
-  protocol = "HTTP"
+  port              = 8081
+  protocol          = "HTTP"
   default_action {
-    type = "forward"
+    type             = "forward"
     target_group_arn = aws_lb_target_group.main["backend"].arn
   }
 }

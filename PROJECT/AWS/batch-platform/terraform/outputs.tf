@@ -11,7 +11,7 @@ output "db_identifier" {
   value = aws_db_instance.oracle.identifier
 }
 output "ecr_repositories" {
-  value = {for k, r in aws_ecr_repository.service: k => r.repository_url}
+  value = { for k, r in aws_ecr_repository.service : k => r.repository_url }
 }
 output "runtime_secret_arn" {
   value = aws_secretsmanager_secret.runtime.arn

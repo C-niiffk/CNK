@@ -1,0 +1,613 @@
+name: Batch Platform
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
+    paths:
+      - 'PROJECT/AWS/batch-platform/**'
+      - '.github/workflows/batch-platform.yml'
+
+  push:
+    branches: [main]
+    paths:
+      - 'PROJECT/AWS/batch-platform/**'
+      - '.github/workflows/batch-platform.yml'
+
+permissions:
+  contents: read
+
+# Main runs share one queue, including the time spent waiting for
+# infrastructure approval.
+# PR checks use their own queue and never block a running deployment.
+concurrency:
+  group: batch-platform-${{ github.event_name == 'push' && 'lab-deployment' || format('pr-{0}', github.event.pull_request.number) }}
+  cancel-in-progress: false
+  queue: max
+
+env:
+  # CNK is a monorepo. batch-platform lives under PROJECT/AWS/batch-platform.
+  # setup-cicd.py stores this value in the BATCH_PROJECT_DIR repository variable.
+  PROJECT_DIR: ${{ vars.BATCH_PROJECT_DIR || 'PROJECT/AWS/batch-platform' }}
+
+  TF_IN_AUTOMATION: 'true'
+  TF_INPUT: 'false'
+  AWS_PAGER: ''
+  AWS_DEFAULT_OUTPUT: json
+
+  # Non-sensitive repository configuration.
+  AWS_REGION: ${{ vars.BATCH_AWS_REGION }}
+  AWS_DEFAULT_REGION: ${{ vars.BATCH_AWS_REGION }}
+
+  # Private AWS infrastructure identifiers.
+  # Values are stored in GitHub Actions Secrets and are not committed to Git.
+  BATCH_AWS_ACCOUNT_ID: ${{ secrets.BATCH_AWS_ACCOUNT_ID }}
+  BATCH_STATE_BUCKET: ${{ secrets.BATCH_STATE_BUCKET }}
+  BATCH_STATE_KEY: ${{ secrets.BATCH_STATE_KEY }}
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # Select changed components
+  # ---------------------------------------------------------------------------
+
+  select:
+    name: Select changes
+
+    if: vars.BATCH_CD_PAUSED != 'true' || github.event_name == 'pull_request'
+
+    runs-on: ubuntu-24.04
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+
+    timeout-minutes: 5
+
+    environment: ${{ github.event_name == 'push' && 'terraform-plan' || 'ci' }}
+
+    permissions:
+      contents: read
+      id-token: write
+
+    outputs:
+      target: ${{ steps.selection.outputs.target }}
+      ci_target: ${{ steps.selection.outputs.ci_target }}
+      infrastructure: ${{ steps.selection.outputs.infrastructure }}
+      config_check: ${{ steps.selection.outputs.config_check }}
+      trusted: ${{ steps.selection.outputs.trusted }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Configure AWS credentials for main selection
+        if: github.event_name == 'push'
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.BATCH_PLAN_ROLE_ARN }}
+          aws-region: ${{ vars.BATCH_AWS_REGION }}
+          allowed-account-ids: ${{ secrets.BATCH_AWS_ACCOUNT_ID }}
+          unset-current-credentials: true
+
+      - id: selection
+        name: Select application and infrastructure changes
+        run: python3 docs/scripts/pipeline.py select
+
+
+  # ---------------------------------------------------------------------------
+  # Application CI
+  # ---------------------------------------------------------------------------
+
+  application-ci:
+    name: Application CI
+
+    needs: select
+
+    if: needs.select.outputs.ci_target != 'none'
+
+    runs-on: ubuntu-24.04
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Java 21
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Maven tests and Docker builds without AWS credentials
+        env:
+          BATCH_CI_TARGET: ${{ needs.select.outputs.ci_target }}
+          BATCH_EVENT: ${{ github.event_name }}
+        run: |
+          python3 docs/scripts/cicd.py check
+
+          if [ "$BATCH_EVENT" = push ]; then
+            python3 docs/scripts/pipeline.py build \
+              --target "$BATCH_CI_TARGET" \
+              --archive
+          else
+            python3 docs/scripts/pipeline.py build \
+              --target "$BATCH_CI_TARGET"
+          fi
+
+      - name: Keep this main run's tested Docker images for Application CD
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: images-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ env.PROJECT_DIR }}/ci-images/
+          retention-days: 7
+          compression-level: 0
+          if-no-files-found: error
+
+
+  # ---------------------------------------------------------------------------
+  # Terraform CI
+  # ---------------------------------------------------------------------------
+
+  terraform-ci:
+    name: Terraform CI
+
+    needs: select
+
+    if: needs.select.outputs.config_check == 'true'
+
+    runs-on: ubuntu-24.04
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.13.5
+          terraform_wrapper: false
+
+      - name: Check scripts and Terraform configuration without AWS credentials
+        run: |
+          python3 -m unittest discover -s docs/scripts/tests -v
+
+          terraform -chdir=terraform fmt -check -recursive
+
+          terraform -chdir=terraform init \
+            -backend=false \
+            -input=false \
+            -lockfile=readonly
+
+          terraform -chdir=terraform validate
+
+
+  # ---------------------------------------------------------------------------
+  # Terraform PR speculative plan
+  # ---------------------------------------------------------------------------
+
+  terraform-pr-plan:
+    name: Terraform PR plan
+
+    needs:
+      - select
+      - terraform-ci
+
+    if: >-
+      github.event_name == 'pull_request' &&
+      needs.select.outputs.infrastructure == 'true' &&
+      needs.select.outputs.trusted == 'true'
+
+    runs-on: ubuntu-24.04
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+
+    timeout-minutes: 20
+
+    # Terraform state/read-only AWS access is protected by this environment.
+    environment: terraform-pr-plan
+
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      # Full private Terraform configuration.
+      # pipeline.py creates a temporary runtime tfvars file from this secret.
+      BATCH_TFVARS: ${{ secrets.BATCH_TFVARS }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.13.5
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials for PR plan
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.BATCH_PR_PLAN_ROLE_ARN }}
+          aws-region: ${{ vars.BATCH_AWS_REGION }}
+          allowed-account-ids: ${{ secrets.BATCH_AWS_ACCOUNT_ID }}
+          unset-current-credentials: true
+
+      - name: Terraform speculative plan
+        run: python3 docs/scripts/pipeline.py plan --speculative
+
+
+  # ---------------------------------------------------------------------------
+  # CI gate
+  # ---------------------------------------------------------------------------
+
+  ci-gate:
+    name: CI gate
+
+    needs:
+      - select
+      - application-ci
+      - terraform-ci
+      - terraform-pr-plan
+
+    if: always()
+
+    runs-on: ubuntu-24.04
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+
+    timeout-minutes: 5
+
+    steps:
+      - name: Require every selected check to pass
+        working-directory: .
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          BATCH_EVENT: ${{ github.event_name }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+
+          n = json.loads(os.environ['NEEDS_JSON'])
+
+          if n['select']['result'] != 'success':
+              raise SystemExit('Selection did not succeed.')
+
+          s = n['select']['outputs']
+          required = []
+
+          if s['ci_target'] != 'none':
+              required.append('application-ci')
+
+          if s['config_check'] == 'true':
+              required.append('terraform-ci')
+
+          if (
+              os.environ['BATCH_EVENT'] == 'pull_request'
+              and s['infrastructure'] == 'true'
+          ):
+              if s['trusted'] != 'true':
+                  raise SystemExit(
+                      'Terraform plans require a reviewed branch in this '
+                      'repository. Fork PRs do not receive AWS access.'
+                  )
+
+              required.append('terraform-pr-plan')
+
+          for job in required:
+              if n[job]['result'] != 'success':
+                  raise SystemExit(job + ' did not succeed.')
+
+          print('CI GATE PASSED. A PR can now be reviewed and merged.')
+          PY
+
+
+  # ---------------------------------------------------------------------------
+  # Infrastructure CD - create immutable Terraform plan
+  # ---------------------------------------------------------------------------
+
+  infrastructure-plan:
+    name: Infrastructure CD - saved plan
+
+    needs:
+      - select
+      - ci-gate
+
+    if: >-
+      github.event_name == 'push' &&
+      needs.select.outputs.infrastructure == 'true' &&
+      vars.BATCH_CD_PAUSED != 'true'
+
+    runs-on: ubuntu-24.04
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+
+    timeout-minutes: 25
+
+    environment: terraform-plan
+
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      BATCH_TFVARS: ${{ secrets.BATCH_TFVARS }}
+
+    outputs:
+      plan_key: ${{ steps.plan.outputs.plan_key }}
+      plan_sha: ${{ steps.plan.outputs.plan_sha }}
+      has_changes: ${{ steps.plan.outputs.has_changes }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.13.5
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials for infrastructure plan
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.BATCH_PLAN_ROLE_ARN }}
+          aws-region: ${{ vars.BATCH_AWS_REGION }}
+          allowed-account-ids: ${{ secrets.BATCH_AWS_ACCOUNT_ID }}
+          unset-current-credentials: true
+
+      - id: plan
+        name: Create and save Terraform plan
+        run: python3 docs/scripts/pipeline.py plan
+
+
+  # ---------------------------------------------------------------------------
+  # Infrastructure CD - approved Terraform apply
+  # ---------------------------------------------------------------------------
+
+  infrastructure-apply:
+    name: Infrastructure CD - approved apply
+
+    needs: infrastructure-plan
+
+    if: needs.infrastructure-plan.outputs.has_changes == 'true'
+
+    runs-on: ubuntu-24.04
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+
+    timeout-minutes: 110
+
+    # Manual approval is configured on this GitHub Environment.
+    environment: infra-lab
+
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      BATCH_PLAN_KEY: ${{ needs.infrastructure-plan.outputs.plan_key }}
+      BATCH_PLAN_SHA: ${{ needs.infrastructure-plan.outputs.plan_sha }}
+      BATCH_TFVARS: ${{ secrets.BATCH_TFVARS }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.13.5
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials for infrastructure apply
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.BATCH_INFRA_ROLE_ARN }}
+          aws-region: ${{ vars.BATCH_AWS_REGION }}
+          role-duration-seconds: 7200
+          allowed-account-ids: ${{ secrets.BATCH_AWS_ACCOUNT_ID }}
+          unset-current-credentials: true
+
+      - name: Apply approved Terraform plan
+        run: python3 docs/scripts/pipeline.py apply
+
+
+  # ---------------------------------------------------------------------------
+  # Application CD
+  # ---------------------------------------------------------------------------
+
+  application-cd:
+    name: Application CD
+
+    needs:
+      - select
+      - ci-gate
+      - infrastructure-plan
+      - infrastructure-apply
+
+    if: >-
+      always() &&
+      github.event_name == 'push' &&
+      vars.BATCH_CD_PAUSED != 'true' &&
+      needs.ci-gate.result == 'success' &&
+      needs.select.outputs.target != 'none' &&
+      (
+        needs.infrastructure-plan.result == 'success' ||
+        needs.infrastructure-plan.result == 'skipped'
+      ) &&
+      (
+        needs.infrastructure-apply.result == 'success' ||
+        (
+          needs.infrastructure-apply.result == 'skipped' &&
+          needs.infrastructure-plan.outputs.has_changes != 'true'
+        )
+      )
+
+    runs-on: ubuntu-24.04
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+
+    timeout-minutes: 110
+
+    environment: app-lab
+
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+
+    env:
+      BATCH_TARGET: ${{ needs.select.outputs.target }}
+      BATCH_USE_CI_IMAGES: 'true'
+      BATCH_TFVARS: ${{ secrets.BATCH_TFVARS }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download only this main run's tested image artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "$GITHUB_RUN_ID" \
+            --name "images-${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}" \
+            --dir ci-images
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.13.5
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials for application deployment
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.BATCH_AWS_ROLE_ARN }}
+          aws-region: ${{ vars.BATCH_AWS_REGION }}
+          role-duration-seconds: 7200
+          allowed-account-ids: ${{ secrets.BATCH_AWS_ACCOUNT_ID }}
+          unset-current-credentials: true
+
+      - name: Push tested images, initialize once if needed, deploy ECS, and check health
+        run: |
+          python3 docs/scripts/cicd.py deploy \
+            --target "$BATCH_TARGET"
+
+
+  # ---------------------------------------------------------------------------
+  # Record successful main revision
+  # ---------------------------------------------------------------------------
+
+  complete:
+    name: Record successful main revision
+
+    needs:
+      - select
+      - ci-gate
+      - infrastructure-plan
+      - infrastructure-apply
+      - application-cd
+
+    if: >-
+      always() &&
+      github.event_name == 'push' &&
+      vars.BATCH_CD_PAUSED != 'true' &&
+      needs.ci-gate.result == 'success' &&
+      (
+        needs.infrastructure-plan.result == 'success' ||
+        needs.infrastructure-plan.result == 'skipped'
+      ) &&
+      (
+        needs.infrastructure-apply.result == 'success' ||
+        (
+          needs.infrastructure-apply.result == 'skipped' &&
+          needs.infrastructure-plan.outputs.has_changes != 'true'
+        )
+      ) &&
+      (
+        needs.application-cd.result == 'success' ||
+        (
+          needs.application-cd.result == 'skipped' &&
+          needs.select.outputs.target == 'none'
+        )
+      )
+
+    runs-on: ubuntu-24.04
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ env.PROJECT_DIR }}
+
+    timeout-minutes: 5
+
+    environment: app-lab
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configure AWS credentials for completion checkpoint
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.BATCH_AWS_ROLE_ARN }}
+          aws-region: ${{ vars.BATCH_AWS_REGION }}
+          allowed-account-ids: ${{ secrets.BATCH_AWS_ACCOUNT_ID }}
+          unset-current-credentials: true
+
+      - name: Record successful revision
+        run: python3 docs/scripts/pipeline.py complete

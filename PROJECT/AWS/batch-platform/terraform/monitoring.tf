@@ -5,20 +5,20 @@ resource "aws_sns_topic_subscription" "email" {
   endpoint  = var.alarm_email
   protocol  = "email"
   topic_arn = aws_sns_topic.alarms.arn
-  count = var.alarm_email == "" ? 0:1
+  count     = var.alarm_email == "" ? 0 : 1
 }
 resource "aws_cloudwatch_metric_alarm" "rds_cpu" {
-  alarm_name = "${local.name}-rds-cpu"
+  alarm_name          = "${local.name}-rds-cpu"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 3
-  namespace = "AWS/RDS"
-  metric_name = "CPUUtilization"
-  dimensions = {DBInstanceIdentifier = aws_db_instance.oracle.identifier}
-  statistic = "Average"
-  period = 300
-  threshold = 80
-  alarm_actions = [aws_sns_topic.alarms.arn]
-  treat_missing_data = "missing"
+  namespace           = "AWS/RDS"
+  metric_name         = "CPUUtilization"
+  dimensions          = { DBInstanceIdentifier = aws_db_instance.oracle.identifier }
+  statistic           = "Average"
+  period              = 300
+  threshold           = 80
+  alarm_actions       = [aws_sns_topic.alarms.arn]
+  treat_missing_data  = "missing"
 }
 resource "aws_cloudwatch_metric_alarm" "target_health" {
   for_each            = aws_lb_target_group.main

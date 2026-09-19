@@ -1,6 +1,6 @@
 resource "aws_ecr_repository" "service" {
-  for_each = local.modules
-  name = "${local.name}/${each.key}"
+  for_each             = local.modules
+  name                 = "${local.name}/${each.key}"
   image_tag_mutability = "IMMUTABLE"
   image_scanning_configuration {
     scan_on_push = true
@@ -10,8 +10,8 @@ resource "aws_ecr_repository" "service" {
   }
 }
 resource "aws_cloudwatch_log_group" "service" {
-  for_each = toset(["frontend", "backend", "app1", "app2", "init"])
-  name = "/ecs/${local.name}/${each.key}"
+  for_each          = toset(["frontend", "backend", "app1", "app2", "init"])
+  name              = "/ecs/${local.name}/${each.key}"
   retention_in_days = 30
 }
 resource "aws_ecs_cluster" "main" {
@@ -25,7 +25,7 @@ resource "aws_service_discovery_http_namespace" "main" {
   name = "${local.name}.internal"
 }
 locals {
-  ports = {frontend = 8080, backend = 8081}
+  ports          = { frontend = 8080, backend = 8081 }
   runtime_secret = aws_secretsmanager_secret.runtime.arn
   logs = { for k, g in aws_cloudwatch_log_group.service : k => {
     logDriver = "awslogs"
@@ -35,58 +35,58 @@ locals {
   common_secret = [{ name = "INTERNAL_TOKEN", valueFrom = "${local.runtime_secret}:internal_token::" }]
 }
 resource "aws_ecs_task_definition" "core" {
-  for_each = local.ports
-  family = "${local.name}-${each.key}"
-  network_mode = "awsvpc"
+  for_each                 = local.ports
+  family                   = "${local.name}-${each.key}"
+  network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
-  cpu = 256
-  memory = 512
-  execution_role_arn = aws_iam_role.execution[each.key].arn
-  task_role_arn = aws_iam_role.task.arn
+  cpu                      = 256
+  memory                   = 512
+  execution_role_arn       = aws_iam_role.execution[each.key].arn
+  task_role_arn            = aws_iam_role.task.arn
   runtime_platform {
     operating_system_family = "LINUX"
-    cpu_architecture = "X86_64"
+    cpu_architecture        = "X86_64"
   }
   volume { name = "tmp" }
   container_definitions = jsonencode([{
-    name = each.key
-    image = "${aws_ecr_repository.service["${each.key}-service"].repository_url}:${local.service_image_tags["${each.key}-service"]}"
-    essential = true
-    user = "10001:10001"
+    name                   = each.key
+    image                  = "${aws_ecr_repository.service["${each.key}-service"].repository_url}:${local.service_image_tags["${each.key}-service"]}"
+    essential              = true
+    user                   = "10001:10001"
     readonlyRootFilesystem = true
-    mountPoints = [{ sourceVolume = "tmp", containerPath = "/tmp", readOnly = false }]
-    cpu = 128
-    memory = 384
-    stopTimeout = 120
-    portMappings = [{ name = each.key, containerPort = each.value, protocol = "tcp", appProtocol = "http" }]
-    logConfiguration = local.logs[each.key]
+    mountPoints            = [{ sourceVolume = "tmp", containerPath = "/tmp", readOnly = false }]
+    cpu                    = 128
+    memory                 = 384
+    stopTimeout            = 120
+    portMappings           = [{ name = each.key, containerPort = each.value, protocol = "tcp", appProtocol = "http" }]
+    logConfiguration       = local.logs[each.key]
     environment = concat(local.common_env, [
       { name = "PORT", value = tostring(each.value) },
       { name = "DB_USER", value = each.key == "frontend" ? "BATCH_READER" : "BATCH_OWNER" }
-    ], each.key == "frontend" ? [
+      ], each.key == "frontend" ? [
       { name = "BACKEND_URL", value = "http://${aws_lb.main["internal"].dns_name}:8081" },
       { name = "UI_USER", value = "operator" },
       { name = "COOKIE_SECURE", value = var.use_custom_domain ? "true" : "false" }
-    ] : [
+      ] : [
       { name = "AGENT_APP1_URL", value = "http://app1-agent:8090" },
       { name = "AGENT_APP2_URL", value = "http://app2-agent:8090" }
     ])
-    secrets = concat(local.common_secret, [{ name = "DB_PASSWORD", valueFrom = "${local.runtime_secret}:${each.key == "frontend" ? "reader_password" : "owner_password"}::" }], each.key == "frontend" ? [{ name = "UI_PASSWORD", valueFrom = "${local.runtime_secret}:ui_password::" }] : [])
+    secrets     = concat(local.common_secret, [{ name = "DB_PASSWORD", valueFrom = "${local.runtime_secret}:${each.key == "frontend" ? "reader_password" : "owner_password"}::" }], each.key == "frontend" ? [{ name = "UI_PASSWORD", valueFrom = "${local.runtime_secret}:ui_password::" }] : [])
     healthCheck = { command = ["CMD-SHELL", "curl -fsS http://127.0.0.1:${each.value}/health/liveness || exit 1"], interval = 30, timeout = 5, retries = 3, startPeriod = 60 }
   }])
 }
 resource "aws_ecs_task_definition" "app" {
-  for_each = toset(["app1", "app2"])
-  family = "${local.name}-${each.key}"
-  network_mode = "awsvpc"
+  for_each                 = toset(["app1", "app2"])
+  family                   = "${local.name}-${each.key}"
+  network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
-  cpu = 512
-  memory = 1024
-  execution_role_arn = aws_iam_role.execution["app"].arn
-  task_role_arn = aws_iam_role.task.arn
+  cpu                      = 512
+  memory                   = 1024
+  execution_role_arn       = aws_iam_role.execution["app"].arn
+  task_role_arn            = aws_iam_role.task.arn
   runtime_platform {
     operating_system_family = "LINUX"
-    cpu_architecture = "X86_64"
+    cpu_architecture        = "X86_64"
   }
   volume {
     name = "scratch"
@@ -104,14 +104,14 @@ resource "aws_ecs_task_definition" "app" {
         { sourceVolume = "application-tmp", containerPath = "/tmp", readOnly = false },
         { sourceVolume = "scratch", containerPath = "/work", readOnly = false }
       ]
-      cpu                    = 256
-      memory                 = 384
-      stopTimeout            = 120
-      portMappings           = [{ name = "application", containerPort = 8082, protocol = "tcp" }]
-      logConfiguration       = local.logs[each.key]
-      environment            = [{ name = "PORT", value = "8082" }, { name = "BIND_ADDRESS", value = "127.0.0.1" }, { name = "APP_ID", value = each.key }]
-      secrets                = local.common_secret
-      healthCheck            = { command = ["CMD-SHELL", "curl -fsS http://127.0.0.1:8082/health/liveness || exit 1"], interval = 15, timeout = 5, retries = 3, startPeriod = 60 }
+      cpu              = 256
+      memory           = 384
+      stopTimeout      = 120
+      portMappings     = [{ name = "application", containerPort = 8082, protocol = "tcp" }]
+      logConfiguration = local.logs[each.key]
+      environment      = [{ name = "PORT", value = "8082" }, { name = "BIND_ADDRESS", value = "127.0.0.1" }, { name = "APP_ID", value = each.key }]
+      secrets          = local.common_secret
+      healthCheck      = { command = ["CMD-SHELL", "curl -fsS http://127.0.0.1:8082/health/liveness || exit 1"], interval = 15, timeout = 5, retries = 3, startPeriod = 60 }
     },
     {
       name                   = "agent"
@@ -159,46 +159,46 @@ resource "aws_ecs_task_definition" "init" {
   }])
 }
 resource "aws_ecs_service" "app" {
-  for_each = var.deploy_services ? toset(["app1", "app2"]) : toset([])
-  name = "${local.name}-${each.key}"
-  cluster = aws_ecs_cluster.main.id
-  task_definition = aws_ecs_task_definition.app[each.key].arn
-  desired_count = 1
-  launch_type = "FARGATE"
-  platform_version = "1.4.0"
-  availability_zone_rebalancing = "ENABLED"
+  for_each                           = var.deploy_services ? toset(["app1", "app2"]) : toset([])
+  name                               = "${local.name}-${each.key}"
+  cluster                            = aws_ecs_cluster.main.id
+  task_definition                    = aws_ecs_task_definition.app[each.key].arn
+  desired_count                      = 1
+  launch_type                        = "FARGATE"
+  platform_version                   = "1.4.0"
+  availability_zone_rebalancing      = "ENABLED"
   deployment_minimum_healthy_percent = 100
-  deployment_maximum_percent = 200
+  deployment_maximum_percent         = 200
   deployment_circuit_breaker {
     enable   = true
     rollback = true
   }
   network_configuration {
-    subnets = aws_subnet.private[*].id
-    security_groups = [aws_security_group.tier["app"].id]
+    subnets          = aws_subnet.private[*].id
+    security_groups  = [aws_security_group.tier["app"].id]
     assign_public_ip = false
   }
   service_connect_configuration {
-    enabled = true
+    enabled   = true
     namespace = aws_service_discovery_http_namespace.main.arn
     log_configuration {
       log_driver = "awslogs"
       options = {
-        "awslogs-group"  = aws_cloudwatch_log_group.service[each.key].name
-        "awslogs-region" = var.region
+        "awslogs-group"         = aws_cloudwatch_log_group.service[each.key].name
+        "awslogs-region"        = var.region
         "awslogs-stream-prefix" = "ecs"
       }
     }
     service {
-      port_name = "agent"
+      port_name      = "agent"
       discovery_name = "${each.key}-agent"
       client_alias {
-        port = 8090
+        port     = 8090
         dns_name = "${each.key}-agent"
       }
       timeout {
         per_request_timeout_seconds = 100
-        idle_timeout_seconds = 120
+        idle_timeout_seconds        = 120
       }
     }
   }
