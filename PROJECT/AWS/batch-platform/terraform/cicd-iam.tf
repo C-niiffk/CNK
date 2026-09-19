@@ -256,12 +256,20 @@ resource "aws_iam_role_policy" "cicd" {
         Action   = ["ecs:RegisterTaskDefinition"]
         Resource = "*"
       },
+
+      # ECS DeregisterTaskDefinition is authorized against "*" by AWS.
+      # Keep it separate from the resource-scoped task-definition tag permissions.
       {
-        Sid    = "ManageProjectTaskRevisions"
+        Sid      = "DeregisterTaskDefinitions"
+        Effect   = "Allow"
+        Action   = ["ecs:DeregisterTaskDefinition"]
+        Resource = "*"
+      },
+      {
+        Sid    = "ManageProjectTaskRevisionTags"
         Effect = "Allow"
 
         Action = [
-          "ecs:DeregisterTaskDefinition",
           "ecs:TagResource",
           "ecs:UntagResource"
         ]
