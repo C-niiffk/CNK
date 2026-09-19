@@ -1,0 +1,8 @@
+.git
+.cicd-work
+ci-images
+cleanup-work
+**/.terraform
+**/*.tfstate*
+**/*.tfplan
+**/backend.hcl

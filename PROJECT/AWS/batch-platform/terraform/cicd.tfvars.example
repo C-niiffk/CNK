@@ -1,0 +1,22 @@
+# Copy your actual deployment variables to cicd.tfvars instead of blindly using these examples.
+# Keep cicd.tfvars LOCAL. setup-cicd.py stores its contents as the protected BATCH_TFVARS Actions secret; never commit it.
+region                    = "us-east-1"
+project                   = "batch-platform"
+environment               = "lab"
+use_custom_domain         = false
+domain_name               = ""
+hosted_zone_id            = ""
+allowed_cidrs             = ["203.0.113.10/32"] # Replace with your browser's real public IPv4.
+oracle_engine_version     = "19.REPLACE_WITH_A_RETURNED_VERSION"
+db_instance_class         = "db.t3.small"
+image_tag                 = "jdk21-v1" # Pipeline overrides this on every release.
+deploy_services           = false      # Pipeline overrides this at the correct deployment stage.
+protect_data              = true
+final_snapshot_identifier = "batch-platform-lab-final"
+alarm_email               = ""
+github_repository         = "OWNER/REPO"
+github_owner_id           = "123456" # Get the actual numeric IDs with gh api.
+github_repository_id      = "123456789"
+github_existing_oidc_provider_arn = "" # Use the existing provider ARN if this account already has one.
+cicd_state_bucket         = "batch-tfstate-123456789012-us-east-1"
+cicd_state_key            = "batch-platform/lab/terraform.tfstate"

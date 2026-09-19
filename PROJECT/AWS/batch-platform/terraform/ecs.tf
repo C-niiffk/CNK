@@ -50,7 +50,7 @@ resource "aws_ecs_task_definition" "core" {
   volume { name = "tmp" }
   container_definitions = jsonencode([{
     name = each.key
-    image = "${aws_ecr_repository.service["${each.key}-service"].repository_url}:${var.image_tag}"
+    image = "${aws_ecr_repository.service["${each.key}-service"].repository_url}:${local.service_image_tags["${each.key}-service"]}"
     essential = true
     user = "10001:10001"
     readonlyRootFilesystem = true
@@ -96,7 +96,7 @@ resource "aws_ecs_task_definition" "app" {
   container_definitions = jsonencode([
     {
       name                   = "application"
-      image                  = "${aws_ecr_repository.service["application-service"].repository_url}:${var.image_tag}"
+      image                  = "${aws_ecr_repository.service["application-service"].repository_url}:${local.service_image_tags["application-service"]}"
       essential              = true
       user                   = "10001:10001"
       readonlyRootFilesystem = true
@@ -115,7 +115,7 @@ resource "aws_ecs_task_definition" "app" {
     },
     {
       name                   = "agent"
-      image                  = "${aws_ecr_repository.service["agent-service"].repository_url}:${var.image_tag}"
+      image                  = "${aws_ecr_repository.service["agent-service"].repository_url}:${local.service_image_tags["agent-service"]}"
       essential              = true
       user                   = "10001:10001"
       readonlyRootFilesystem = true
@@ -143,7 +143,7 @@ resource "aws_ecs_task_definition" "init" {
   volume { name = "tmp" }
   container_definitions = jsonencode([{
     name                   = "init"
-    image                  = "${aws_ecr_repository.service["backend-service"].repository_url}:${var.image_tag}"
+    image                  = "${aws_ecr_repository.service["backend-service"].repository_url}:${local.service_image_tags["backend-service"]}"
     essential              = true
     user                   = "10001:10001"
     readonlyRootFilesystem = true
