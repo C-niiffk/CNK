@@ -3,7 +3,7 @@ terraform {
   backend "s3" {}
   required_providers {
     aws = {
-      source = "hashicorp/aws"
+      source  = "hashicorp/aws"
       version = "6.12.0"
     }
   }
@@ -12,7 +12,7 @@ terraform {
 provider "aws" {
   region = var.region
   default_tags {
-    tags = { Project = var.project, Environment = var.environment, ManagedBy = "Terraform"}
+    tags = { Project = var.project, Environment = var.environment, ManagedBy = "Terraform" }
   }
 }
 

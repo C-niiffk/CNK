@@ -1,25 +1,25 @@
 variable "region" {
-  type = string
+  type    = string
   default = "us-east-1"
 }
 variable "project" {
-  type = string
+  type    = string
   default = "batch-platform"
   validation {
-    condition = can(regex("^[a-z][a-z0-9-]{2,17}$", var.project))
+    condition     = can(regex("^[a-z][a-z0-9-]{2,17}$", var.project))
     error_message = "Use 3-18 lowercase letters, digits or hyphens, starting with a letter"
   }
 }
 variable "environment" {
-  type = string
+  type    = string
   default = "lab"
   validation {
-    condition = can(regex("^[a-z0-9]{2,6}$", var.environment))
+    condition     = can(regex("^[a-z0-9]{2,6}$", var.environment))
     error_message = "Use 2-6 lowercase alphanumeric characters."
   }
 }
 variable "vpc_cidr" {
-  type = string
+  type    = string
   default = "10.42.0.0/16"
 }
 variable "use_custom_domain" {
@@ -49,58 +49,58 @@ variable "hosted_zone_id" {
   }
 }
 variable "allowed_cidrs" {
-  type = list(string)
+  type        = list(string)
   description = "Trusted public IPv4 egress CIDRs allowed into the public ALB"
 
   validation {
     condition = (
-    length(var.allowed_cidrs) > 0 &&
-    alltrue([
-      for c in var.allowed_cidrs :
-      (can(cidrnetmask(c)) && c != "0.0.0.0/0")
-    ])
+      length(var.allowed_cidrs) > 0 &&
+      alltrue([
+        for c in var.allowed_cidrs :
+        (can(cidrnetmask(c)) && c != "0.0.0.0/0")
+      ])
     )
 
     error_message = "Provide trusted IPv4 CIDRs; this template refuses 0.0.0.0/0."
   }
 }
 variable "oracle_engine_version" {
-  type = string
+  type        = string
   description = "Exact available Oracle SE2 19c engine version; discover with AWS CLI before apply"
   validation {
-    condition = startswith(var.oracle_engine_version, "19.")
+    condition     = startswith(var.oracle_engine_version, "19.")
     error_message = "This template uses Oracle 19c non-CDB (oracle-se2)."
   }
 }
 variable "db_instance_class" {
-  type = string
+  type    = string
   default = "db.t3.small"
 }
 variable "image_tag" {
-  type = string
+  type    = string
   default = "jdk21-v1"
   validation {
-    condition = can(regex("^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$", var.image_tag)) && var.image_tag != "latest"
+    condition     = can(regex("^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$", var.image_tag)) && var.image_tag != "latest"
     error_message = "Use an immutable release tag, not latest."
   }
 }
 variable "deploy_services" {
-  type = bool
-  default = false
+  type        = bool
+  default     = false
   description = "Set true ONLY after image push and successful init-db task"
 }
 variable "protect_data" {
-  type = bool
-  default = true
+  type        = bool
+  default     = true
   description = "RDS and ALB deletion protection; final RDS snapshot is always required"
 }
 variable "final_snapshot_identifier" {
-  type = string
-  default = "batch-platform-final"
+  type        = string
+  default     = "batch-platform-final"
   description = "Unique final snapshot name; change if that snapshot name already exists"
 }
 variable "alarm_email" {
-  type = string
-  default = ""
+  type        = string
+  default     = ""
   description = "Optional SNS email; confirm subscription to receive alarms"
 }
