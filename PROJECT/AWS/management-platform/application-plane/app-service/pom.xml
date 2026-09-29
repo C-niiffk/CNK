@@ -7,7 +7,7 @@
     <version>1.0.0</version>
     <relativePath>../../pom.xml</relativePath>
   </parent>
-  <artifactId>application-service</artifactId>
+  <artifactId>app-service</artifactId>
   <dependencies>
     <dependency>
       <groupId>com.example.management</groupId>

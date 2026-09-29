@@ -16,7 +16,7 @@ management:
       show-details: never
 logging:
   file:
-    name: ${LOG_FILE:/logs/application.log}
+    name: ${LOG_FILE:/logs/app.log}
   logback:
     rollingpolicy:
       max-file-size: 20MB
