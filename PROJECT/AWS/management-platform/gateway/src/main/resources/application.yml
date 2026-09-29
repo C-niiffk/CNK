@@ -1,0 +1,59 @@
+server:
+  port: ${SERVER_PORT:8080}
+  shutdown: graceful
+spring:
+  lifecycle:
+    timeout-per-shutdown-phase: 25s
+  main:
+    web-application-type: reactive
+  data:
+    redis:
+      host: ${REDIS_HOST:redis}
+      port: 6379
+      password: ${REDIS_PASSWORD:}
+      ssl:
+        enabled: ${REDIS_TLS:false}
+      timeout: 2s
+  cloud:
+    gateway:
+      server:
+        webflux:
+          httpclient:
+            connect-timeout: 2000
+            response-timeout: 6s
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+logging:
+  file:
+    name: ${LOG_FILE:/logs/application.log}
+  logback:
+    rollingpolicy:
+      max-file-size: 20MB
+      max-history: 2
+      total-size-cap: 100MB
+platform:
+  jwt-secret: ${JWT_SECRET}
+  agent:
+    server-addr: ${NACOS_ADDR:localhost:8848}
+    username: ${NACOS_USERNAME:nacos}
+    password: ${NACOS_PASSWORD}
+    namespace: ${NACOS_NAMESPACE:}
+    site: ${SITE:a}
+    service: ${SERVICE_NAME:app1}
+    ip: ${APP_IP:}
+    port: ${SERVER_PORT:8080}
+    register: ${REGISTER:true}
+    gateways:
+      a: ${GATEWAY_A:http://gateway-a:8080}
+      b: ${GATEWAY_B:http://gateway-b:8080}
+  routes:
+    app1: ${APP1_URI:http://app1-a:8080}
+    app2: ${APP2_URI:http://app2-a:8080}

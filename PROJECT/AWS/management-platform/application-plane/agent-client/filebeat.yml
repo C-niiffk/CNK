@@ -1,0 +1,20 @@
+filebeat.inputs:
+  - type: filestream
+    id: application-log
+    enabled: true
+    paths: [/logs/*.log]
+    parsers:
+      - multiline:
+          type: pattern
+          pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+          negate: true
+          match: after
+processors:
+  - add_fields:
+      target: platform
+      fields:
+        service: ${SERVICE_NAME}
+        site: ${SITE}
+output.logstash:
+  hosts: ["${LOGSTASH_HOST:logstash.observability.svc.cluster.local:5044}"]
+logging.level: warning
