@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Management Platform</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><strong>Management Platform</strong><span>Services · APIs · Operations</span>
+  <button id="logout" hidden>Sign out</button>
+</header>
+<main>
+  <section id="login"><h1>Platform console</h1>
+    <p>Manage service access and inspect your AWS deployment.</p>
+    <form id="login-form"><label>Username<input id="username" value="admin" autocomplete="username"
+                                                required></label><label>Password<input id="password" type="password"
+                                                                                       autocomplete="current-password"
+                                                                                       required></label>
+      <button>Sign in</button>
+    </form>
+  </section>
+  <section id="console" hidden>
+    <nav id="tabs"></nav>
+    <h1 id="title"></h1>
+    <p id="help"></p>
+    <div id="fields"></div>
+    <div id="actions"></div>
+    <textarea id="editor" spellcheck="false" hidden aria-label="Configuration editor"></textarea>
+    <div id="table"></div>
+    <pre id="result" aria-live="polite"></pre>
+  </section>
+  <p id="status" role="status"></p></main>
+<script src="ui.js"></script>
+</body>
+</html>

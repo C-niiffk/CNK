@@ -1,0 +1,52 @@
+server:
+  port: ${SERVER_PORT:8080}
+  shutdown: graceful
+spring:
+  lifecycle:
+    timeout-per-shutdown-phase: 25s
+  application:
+    name: management-server
+  datasource:
+    url: ${DB_URL:jdbc:h2:file:./data/management;MODE=Oracle;DATABASE_TO_UPPER=true}
+    username: ${DB_USER:sa}
+    password: ${DB_PASSWORD:}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: none
+  flyway:
+    enabled: true
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+logging:
+  file:
+    name: ${LOG_FILE:/logs/application.log}
+  logback:
+    rollingpolicy:
+      max-file-size: 20MB
+      max-history: 2
+      total-size-cap: 100MB
+platform:
+  jwt-secret: ${JWT_SECRET}
+  agent:
+    server-addr: ${NACOS_ADDR:localhost:8848}
+    username: ${NACOS_USERNAME:nacos}
+    password: ${NACOS_PASSWORD}
+    namespace: ${NACOS_NAMESPACE:}
+    site: ${SITE:a}
+    service: ${SERVICE_NAME:app1}
+    ip: ${APP_IP:}
+    port: ${SERVER_PORT:8080}
+    register: ${REGISTER:true}
+    gateways:
+      a: ${GATEWAY_A:http://gateway-a:8080}
+      b: ${GATEWAY_B:http://gateway-b:8080}
+  admin-password: ${ADMIN_PASSWORD}
