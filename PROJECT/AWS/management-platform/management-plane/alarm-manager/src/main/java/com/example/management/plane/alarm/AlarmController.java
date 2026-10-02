@@ -52,6 +52,6 @@ public class AlarmController {
     if (!grdc.publish("alert-rules.json", json.writeValueAsString(rules), "json"))
       throw new IllegalStateException("Publish failed");
     audit.record(p.getName(), "ALERT_RULES_UPDATE", "prometheus");
-    return Map.of("published", true, "activation", "config-sync validates with Prometheus before atomic reload");
+    return Map.of("published", true, "activation", "rule-sync validates with Prometheus before atomic reload");
   }
 }

@@ -1,15 +1,15 @@
 package com.example.management.app;
 
-import com.example.management.agent.AgentConfiguration;
-import org.apache.el.parser.Token;
-import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.*;
+import org.springframework.boot.autoconfigure.*;
 import org.springframework.context.annotation.Import;
+import com.example.management.agent.AgentConfiguration;
+import com.example.management.common.Tokens;
 
 @SpringBootApplication
-@Import({AgentConfiguration.class, Token.class})
+@Import({AgentConfiguration.class, Tokens.class})
 public class Application {
   public static void main(String[] args) {
-        SpringApplication.run(Application.class, args);
-    }
+    SpringApplication.run(Application.class, args);
+  }
 }
