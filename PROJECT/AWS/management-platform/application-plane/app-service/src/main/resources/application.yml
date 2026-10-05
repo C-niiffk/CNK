@@ -26,6 +26,7 @@ platform:
   jwt-secret: ${JWT_SECRET}
   agent:
     server-addr: ${NACOS_ADDR:localhost:8848}
+    secondary-addr: ${NACOS_SECONDARY_ADDR:}
     username: ${NACOS_USERNAME:nacos}
     password: ${NACOS_PASSWORD}
     namespace: ${NACOS_NAMESPACE:}

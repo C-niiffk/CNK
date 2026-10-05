@@ -10,6 +10,13 @@ spring:
     url: ${DB_URL:jdbc:h2:file:./data/management;MODE=Oracle;DATABASE_TO_UPPER=true}
     username: ${DB_USER:sa}
     password: ${DB_PASSWORD:}
+    hikari:
+      maximum-pool-size: 6
+      connection-timeout: 5000
+      validation-timeout: 2000
+      data-source-properties:
+        oracle.net.CONNECT_TIMEOUT: 5000
+        oracle.jdbc.ReadTimeout: 10000
   jpa:
     open-in-view: false
     hibernate:
@@ -25,6 +32,9 @@ management:
     health:
       probes:
         enabled: true
+      group:
+        readiness:
+          include: readinessState,db
       show-details: never
 logging:
   file:
@@ -38,6 +48,7 @@ platform:
   jwt-secret: ${JWT_SECRET}
   agent:
     server-addr: ${NACOS_ADDR:localhost:8848}
+    secondary-addr: ${NACOS_SECONDARY_ADDR:}
     username: ${NACOS_USERNAME:nacos}
     password: ${NACOS_PASSWORD}
     namespace: ${NACOS_NAMESPACE:}

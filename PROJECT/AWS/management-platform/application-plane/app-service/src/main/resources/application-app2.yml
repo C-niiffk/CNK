@@ -1,0 +1,12 @@
+logging:
+  file:
+    name: ${LOG_FILE:/var/log/management/app2/application.log}
+management:
+  endpoint:
+    health:
+      group:
+        readiness:
+          include: readinessState,app2Database
+platform:
+  jobs:
+    step-ms: 2000

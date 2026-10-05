@@ -1,6 +1,16 @@
 package com.example.management.plane.api;
 
-import com.example.management.agent.GrdcClient;import com.example.management.common.ApiPolicy;import com.example.management.common.contract.AuditLog;import com.example.management.common.contract.DocumentStore;import com.fasterxml.jackson.databind.ObjectMapper;import org.springframework.stereotype.Service;import org.springframework.transaction.annotation.Transactional;import java.util.ArrayList;import java.util.List;import java.util.Map;
+import com.example.management.agent.GrdcClient;
+import com.example.management.common.ApiPolicy;
+import com.example.management.common.contract.AuditLog;
+import com.example.management.common.contract.DocumentStore;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 
 @Service
 public class PolicyService {
@@ -31,8 +41,8 @@ public class PolicyService {
   public Map<String, Object> publish() throws Exception {
     var all = list();
     String body = json.writeValueAsString(all);
-    if (!grdc.publish("gateway-policies.json", body, "json"))
-      throw new IllegalStateException("Publish failed; saved draft can be republished");
-    return Map.of("published", true, "services", all.size());
+    docs.put("config:policies", json.writeValueAsString(Map.of("id", "gateway-policies.json", "type", "json", "body", body)));
+    boolean published = grdc.publish("gateway-policies.json", body, "json");
+    return Map.of("saved", true, "publishedToBothSites", published, "services", all.size());
   }
 }

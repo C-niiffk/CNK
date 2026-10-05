@@ -26,6 +26,18 @@ public class LogController {
     if (text.length() > 500 || size < 1 || size > 200) throw new IllegalArgumentException("Invalid search size/text");
     Object q = text.isBlank() ? Map.of("match_all", Map.of()) : Map.of("match", Map.of("message", text));
     var body = Map.of("size", size, "sort", List.of(Map.of("@timestamp", "desc")), "query", Map.of("bool", Map.of("must", List.of(q), "filter", List.of(Map.of("range", Map.of("@timestamp", Map.of("gte", "now-24h")))))));
-    return integrations.request(elastic + "/platform-*/_search", "POST", json.writeValueAsString(body));
+    var unique = new HashMap<String, com.fasterxml.jackson.databind.JsonNode>();
+    int available = 0;
+    for (String endpoint : elastic.split(","))
+      try {
+        var response = json.readTree(integrations.request(endpoint.trim() + "/platform-*/_search?ignore_unavailable=true", "POST", json.writeValueAsString(body)));
+        available++;
+        for (var hit : response.path("hits").path("hits")) unique.put(hit.path("_id").asText(), hit);
+      } catch (Exception unavailable) { /* Query the surviving store when a site is unavailable. */ }
+    if (available == 0)
+      throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, "No telemetry store available");
+    var hits = unique.values().stream().sorted(Comparator.comparing((com.fasterxml.jackson.databind.JsonNode n) -> n.path("_source").path("@timestamp").asText()).reversed()).limit(size).toList();
+    return json.writeValueAsString(Map.of("availableStores", available, "partial", available < elastic.split(",").length, "hits", Map.of("hits", hits)));
+
   }
 }

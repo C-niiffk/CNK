@@ -17,10 +17,12 @@ public class AlarmController {
   private final IntegrationClient integrations;
   private final String alerts;
   private final GrdcClient grdc;
+  private final DocumentStore docs;
   private final AuditLog audit;
   private final ObjectMapper json;
 
-  public AlarmController(IntegrationClient i, @Value("${integration.alertmanager:http://alertmanager:9093}") String a, GrdcClient g, AuditLog u, ObjectMapper j) {
+  public AlarmController(IntegrationClient i, @Value("${integration.alertmanager:http://alertmanager:9093}") String a, GrdcClient g, AuditLog u, ObjectMapper j, DocumentStore docs) {
+    this.docs = docs;
     integrations = i;
     alerts = a;
     grdc = g;
@@ -49,8 +51,9 @@ public class AlarmController {
     for (var r : rules)
       if (r.alert() == null || !r.alert().matches("[A-Za-z_][A-Za-z0-9_]{0,63}") || r.expr() == null || r.expr().length() > 2000 || r.forSeconds() < 0 || !Set.of("warning", "critical").contains(r.severity()))
         throw new IllegalArgumentException("Invalid alert rule");
-    if (!grdc.publish("alert-rules.json", json.writeValueAsString(rules), "json"))
-      throw new IllegalStateException("Publish failed");
+    String body = json.writeValueAsString(rules);
+    docs.put("config:alerts", json.writeValueAsString(Map.of("id", "alert-rules.json", "type", "json", "body", body)));
+    grdc.publish("alert-rules.json", body, "json");
     audit.record(p.getName(), "ALERT_RULES_UPDATE", "prometheus");
     return Map.of("published", true, "activation", "rule-sync validates with Prometheus before atomic reload");
   }

@@ -15,6 +15,7 @@ management:
 platform:
   agent:
     server-addr: ${NACOS_ADDR}
+    secondary-addr: ${NACOS_SECONDARY_ADDR:}
     username: ${NACOS_USERNAME:nacos}
     password: ${NACOS_PASSWORD}
     register: false

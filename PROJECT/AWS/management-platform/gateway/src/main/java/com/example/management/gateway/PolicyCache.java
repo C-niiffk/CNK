@@ -4,12 +4,9 @@ import com.example.management.agent.*;
 import com.example.management.common.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
-import jakarta.annotation.PostConstruct;
+
 
 import java.util.*;
-import java.util.concurrent.Executor;
-
-import com.alibaba.nacos.api.config.listener.Listener;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -25,18 +22,13 @@ public class PolicyCache {
     json = j;
   }
 
-  @PostConstruct
-  void start() throws Exception {
-    var raw = grdc.config().getConfigAndSignListener("gateway-policies.json", grdc.group(), 3000, new Listener() {
-      public Executor getExecutor() {
-        return null;
-      }
-
-      public void receiveConfigInfo(String s) {
-        update(s);
-      }
-    });
-    update(raw);
+  @org.springframework.scheduling.annotation.Scheduled(fixedDelay = 5000, initialDelay = 0)
+  void refresh() {
+    try {
+      update(grdc.read("gateway-policies.json"));
+    } catch (Exception unavailable) {
+      log.warn("Config unavailable; keeping last valid policy snapshot");
+    }
   }
 
   void update(String raw) {

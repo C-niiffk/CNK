@@ -6,7 +6,8 @@ import com.example.management.common.contract.*;
 import java.security.Principal;
 import java.util.*;
 
-import com.example.management.common.contract.AuditLog;import org.springframework.web.bind.annotation.*;
+import com.example.management.common.contract.AuditLog;
+import org.springframework.web.bind.annotation.*;
 import org.springframework.security.access.prepost.PreAuthorize;
 
 @RestController
@@ -14,8 +15,11 @@ import org.springframework.security.access.prepost.PreAuthorize;
 public class ServiceController {
   private final GrdcClient grdc;
   private final AuditLog audit;
+  private final DocumentStore docs;
+  private final com.fasterxml.jackson.databind.ObjectMapper json = new com.fasterxml.jackson.databind.ObjectMapper();
 
-  public ServiceController(GrdcClient g, AuditLog a) {
+  public ServiceController(GrdcClient g, AuditLog a, DocumentStore docs) {
+    this.docs = docs;
     grdc = g;
     audit = a;
   }
@@ -42,9 +46,10 @@ public class ServiceController {
   public Object config(@PathVariable String service, @RequestBody String body, Principal p) throws Exception {
     check(service);
     if (body.length() > 64000) throw new IllegalArgumentException("Config too large");
-    if (!grdc.publish(service + ".properties", body, "properties")) throw new IllegalStateException("Publish failed");
+    docs.put("config:" + service, json.writeValueAsString(Map.of("id", service + ".properties", "type", "properties", "body", body)));
+    boolean published = grdc.publish(service + ".properties", body, "properties");
     audit.record(p.getName(), "CONFIG_UPDATE", service);
-    return Map.of("published", true);
+    return Map.of("saved", true, "publishedToBothSites", published);
   }
 
   private void check(String s) {

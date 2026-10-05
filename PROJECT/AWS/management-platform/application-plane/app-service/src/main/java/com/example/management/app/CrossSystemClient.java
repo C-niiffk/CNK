@@ -25,9 +25,8 @@ public class CrossSystemClient {
   public Map<String, Object> hello(String target, String token) throws Exception {
     if (!Set.of("app1", "app2").contains(target))
       throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unknown target");
-    var sites = SiteSelector.candidates(p.site, grdc.instances(target), grdc.instances("gateway"), p.gateways.keySet());
+    var sites = p.gateways.keySet().stream().sorted(Comparator.comparingInt((String s) -> s.equals(p.site) ? 0 : 1)).toList();
     for (String site : sites) {
-      // Retry only this idempotent GET; never silently retry a business write.
       try {
         var request = HttpRequest.newBuilder(URI.create(p.gateways.get(site) + "/api/" + target + "/hello")).timeout(Duration.ofSeconds(4)).header("Authorization", "Bearer " + token).GET().build();
         var response = http.send(request, HttpResponse.BodyHandlers.ofString());

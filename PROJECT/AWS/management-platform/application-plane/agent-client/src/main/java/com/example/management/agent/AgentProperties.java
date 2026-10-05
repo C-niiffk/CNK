@@ -5,6 +5,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties("platform.agent")
 public class AgentProperties {
   public String serverAddr="localhost:8848", username="nacos", password="", namespace="", group="PLATFORM", site="a", service="app1", ip="";
+  public String secondaryAddr="";
+  public String getSecondaryAddr(){return secondaryAddr;} public void setSecondaryAddr(String v){secondaryAddr=v;}
   public int port=8080;
   public boolean register=true;
   public Map<String,String> gateways=new LinkedHashMap<>(Map.of("a","http://gateway-a:8080","b","http://gateway-b:8080"));
