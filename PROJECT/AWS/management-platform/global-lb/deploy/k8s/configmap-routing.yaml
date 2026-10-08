@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: routing
+  namespace: platform
+data:
+  routing.yml: '@@ROUTING_CONFIG@@'

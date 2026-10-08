@@ -1,0 +1,12 @@
+apiVersion: elbv2.k8s.aws/v1beta1
+kind: TargetGroupBinding
+metadata:
+  name: nacos-grpc-a
+  namespace: grdc
+spec:
+  vpcID: '@@VPC_ID@@'
+  targetGroupARN: '@@DISC_A_GRPC@@'
+  targetType: ip
+  serviceRef:
+    name: nacos-a
+    port: 9848

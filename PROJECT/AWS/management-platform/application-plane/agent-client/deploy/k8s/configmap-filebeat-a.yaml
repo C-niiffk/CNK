@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: filebeat-a
+  namespace: observability
+data:
+  filebeat.yml: |
+    filebeat.inputs:
+    - type: filestream
+      id: containers-a
+      prospector.scanner.symlinks: true
+      paths:
+      - /var/log/containers/*.log
+      parsers:
+      - container:
+          stream: all
+          format: auto
+      prospector.scanner.exclude_files:
+      - filebeat-
+    output.logstash:
+      hosts:
+      - logstash-a.observability.svc:5044
+    queue.disk:
+      max_size: 1GB
+    processors:
+    - add_fields:
+        target: platform
+        fields:
+          source_id: ${SOURCE_NODE}

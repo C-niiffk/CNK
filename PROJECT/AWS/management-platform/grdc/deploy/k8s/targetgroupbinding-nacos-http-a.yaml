@@ -1,0 +1,12 @@
+apiVersion: elbv2.k8s.aws/v1beta1
+kind: TargetGroupBinding
+metadata:
+  name: nacos-http-a
+  namespace: grdc
+spec:
+  vpcID: '@@VPC_ID@@'
+  targetGroupARN: '@@DISC_A_HTTP@@'
+  targetType: ip
+  serviceRef:
+    name: nacos-a
+    port: 8848

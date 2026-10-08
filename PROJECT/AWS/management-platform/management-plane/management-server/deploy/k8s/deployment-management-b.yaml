@@ -1,0 +1,140 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: management-b
+  namespace: platform
+  labels:
+    app: management
+    site: b
+    instance: management-b
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      instance: management-b
+  template:
+    metadata:
+      labels:
+        app: management
+        site: b
+        instance: management-b
+    spec:
+      nodeSelector:
+        site: b
+      terminationGracePeriodSeconds: 40
+      containers:
+      - name: management
+        image: '@@IMAGE_MANAGEMENT_SERVER@@'
+        ports:
+        - containerPort: 8080
+        env:
+        - name: NACOS_USERNAME
+          value: nacos
+        - name: REGISTER
+          value: 'true'
+        - name: GATEWAY_A
+          value: http://gateway-a.gateway.svc:8080
+        - name: GATEWAY_B
+          value: http://gateway-b.gateway.svc:8080
+        - name: JAVA_TOOL_OPTIONS
+          value: -XX:MaxRAMPercentage=60 -Duser.home=/data -Dsun.net.inetaddr.ttl=10
+            -javaagent:/opt/agent/skywalking-agent.jar -Dskywalking.agent.force_tls=false
+        - name: SW_COLLECTOR_BACKEND_SERVICES
+          value: oap.observability.svc:11800
+        - name: LOG_FILE
+          value: /logs/application.log
+        - name: SITE
+          value: b
+        - name: SERVICE_NAME
+          value: management
+        - name: RUNTIME
+          value: eks
+        - name: NACOS_ADDR
+          value: nacos-b.grdc.svc:8848
+        - name: NACOS_SECONDARY_ADDR
+          value: nacos-a.grdc.svc:8848
+        - name: SW_AGENT_NAME
+          value: management
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: runtime
+              key: JWT_SECRET
+        - name: NACOS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: runtime
+              key: NACOS_PASSWORD
+        - name: APP_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: DB_URL
+          value: '@@DB_URL@@'
+        - name: DB_USER
+          value: MP_MGMT
+        - name: INTEGRATION_PROMETHEUS
+          value: http://prometheus.observability.svc:9090
+        - name: INTEGRATION_ALERTMANAGER
+          value: http://alertmanager.observability.svc:9093
+        - name: INTEGRATION_ELASTICSEARCH
+          value: '@@ES_URLS@@'
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: runtime
+              key: MGMT_DB_PASSWORD
+        - name: ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: runtime
+              key: ADMIN_PASSWORD
+        - name: SPRING_APPLICATION_JSON
+          value: '{"spring":{"datasource":{"hikari":{"data-source-properties":{"oracle.net.encryption_client":"REQUIRED","oracle.net.encryption_types_client":"(AES256)","oracle.net.crypto_checksum_client":"REQUIRED","oracle.net.crypto_checksum_types_client":"(SHA256)"}}}}}'
+        resources:
+          requests:
+            cpu: 100m
+            memory: 768Mi
+          limits:
+            memory: 768Mi
+        imagePullPolicy: IfNotPresent
+        startupProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: 8080
+          periodSeconds: 5
+          failureThreshold: 90
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: 8080
+          periodSeconds: 5
+          failureThreshold: 2
+          timeoutSeconds: 3
+        livenessProbe:
+          httpGet:
+            path: /actuator/health/liveness
+            port: 8080
+          periodSeconds: 10
+          failureThreshold: 6
+        volumeMounts:
+        - name: logs
+          mountPath: /logs
+        - name: home
+          mountPath: /data
+        securityContext:
+          runAsUser: 10001
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+      volumes:
+      - name: logs
+        emptyDir: {}
+      - name: home
+        emptyDir: {}
+      securityContext:
+        fsGroup: 10001

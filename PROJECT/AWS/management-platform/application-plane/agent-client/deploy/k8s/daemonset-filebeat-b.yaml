@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: filebeat-b
+  namespace: observability
+spec:
+  selector:
+    matchLabels:
+      app: filebeat-b
+  template:
+    metadata:
+      labels:
+        app: filebeat-b
+    spec:
+      containers:
+      - name: filebeat
+        image: docker.elastic.co/beats/filebeat:8.19.4
+        ports: []
+        env:
+        - name: SOURCE_NODE
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        resources:
+          requests:
+            cpu: 100m
+            memory: 192Mi
+          limits:
+            memory: 192Mi
+        imagePullPolicy: IfNotPresent
+        args:
+        - -e
+        - --strict.perms=false
+        securityContext:
+          runAsUser: 0
+        volumeMounts:
+        - name: config
+          mountPath: /usr/share/filebeat/filebeat.yml
+          subPath: filebeat.yml
+        - name: logs
+          mountPath: /var/log
+          readOnly: true
+        - name: data
+          mountPath: /usr/share/filebeat/data
+      volumes:
+      - name: config
+        configMap:
+          name: filebeat-b
+      - name: logs
+        hostPath:
+          path: /var/log
+      - name: data
+        hostPath:
+          path: /var/lib/platform-filebeat-b
+          type: DirectoryOrCreate

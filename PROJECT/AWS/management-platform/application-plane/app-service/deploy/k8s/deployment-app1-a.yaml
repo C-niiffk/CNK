@@ -1,0 +1,118 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app1-a
+  namespace: applications
+  labels:
+    app: app1
+    site: a
+    instance: app1-a
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      instance: app1-a
+  template:
+    metadata:
+      labels:
+        app: app1
+        site: a
+        instance: app1-a
+    spec:
+      nodeSelector:
+        site: a
+      terminationGracePeriodSeconds: 40
+      containers:
+      - name: app1
+        image: '@@IMAGE_APPLICATION_SERVICE@@'
+        ports:
+        - containerPort: 8080
+        env:
+        - name: NACOS_USERNAME
+          value: nacos
+        - name: REGISTER
+          value: 'true'
+        - name: GATEWAY_A
+          value: http://gateway-a.gateway.svc:8080
+        - name: GATEWAY_B
+          value: http://gateway-b.gateway.svc:8080
+        - name: JAVA_TOOL_OPTIONS
+          value: -XX:MaxRAMPercentage=60 -Duser.home=/data -Dsun.net.inetaddr.ttl=10
+            -javaagent:/opt/agent/skywalking-agent.jar -Dskywalking.agent.force_tls=false
+        - name: SW_COLLECTOR_BACKEND_SERVICES
+          value: oap.observability.svc:11800
+        - name: LOG_FILE
+          value: /logs/application.log
+        - name: SITE
+          value: a
+        - name: SERVICE_NAME
+          value: app1
+        - name: RUNTIME
+          value: eks
+        - name: NACOS_ADDR
+          value: nacos-a.grdc.svc:8848
+        - name: NACOS_SECONDARY_ADDR
+          value: nacos-b.grdc.svc:8848
+        - name: SW_AGENT_NAME
+          value: app1
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: runtime
+              key: JWT_SECRET
+        - name: NACOS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: runtime
+              key: NACOS_PASSWORD
+        - name: APP_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        resources:
+          requests:
+            cpu: 100m
+            memory: 768Mi
+          limits:
+            memory: 768Mi
+        imagePullPolicy: IfNotPresent
+        startupProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: 8080
+          periodSeconds: 5
+          failureThreshold: 90
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: 8080
+          periodSeconds: 5
+          failureThreshold: 2
+          timeoutSeconds: 3
+        livenessProbe:
+          httpGet:
+            path: /actuator/health/liveness
+            port: 8080
+          periodSeconds: 10
+          failureThreshold: 6
+        volumeMounts:
+        - name: logs
+          mountPath: /logs
+        - name: home
+          mountPath: /data
+        securityContext:
+          runAsUser: 10001
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+      volumes:
+      - name: logs
+        emptyDir: {}
+      - name: home
+        emptyDir: {}
+      securityContext:
+        fsGroup: 10001

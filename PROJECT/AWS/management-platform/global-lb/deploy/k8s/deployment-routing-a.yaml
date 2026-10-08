@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: routing-a
+  namespace: platform
+  labels:
+    app: routing
+    site: a
+    instance: routing-a
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      instance: routing-a
+  template:
+    metadata:
+      labels:
+        app: routing
+        site: a
+        instance: routing-a
+    spec:
+      nodeSelector:
+        site: a
+      terminationGracePeriodSeconds: 40
+      containers:
+      - name: routing
+        image: '@@IMAGE_GLOBAL_LB@@'
+        ports:
+        - containerPort: 8080
+        env:
+        - name: AWS_REGION
+          value: '@@REGION@@'
+        - name: ROUTING_LOCK_TABLE
+          value: '@@ROUTING_TABLE@@'
+        - name: NACOS_ADDR
+          value: nacos-a.grdc.svc:8848
+        - name: NACOS_SECONDARY_ADDR
+          value: nacos-b.grdc.svc:8848
+        - name: REGISTER
+          value: 'false'
+        - name: NACOS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: runtime
+              key: NACOS_PASSWORD
+        resources:
+          requests:
+            cpu: 100m
+            memory: 512Mi
+          limits:
+            memory: 512Mi
+        imagePullPolicy: IfNotPresent
+        startupProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: 8080
+          periodSeconds: 5
+          failureThreshold: 90
+        readinessProbe:
+          httpGet:
+            path: /actuator/health/readiness
+            port: 8080
+          periodSeconds: 5
+          failureThreshold: 2
+          timeoutSeconds: 3
+        livenessProbe:
+          httpGet:
+            path: /actuator/health/liveness
+            port: 8080
+          periodSeconds: 10
+          failureThreshold: 6
+        volumeMounts:
+        - name: config
+          mountPath: /config
+      volumes:
+      - name: config
+        configMap:
+          name: routing
+      serviceAccountName: routing-controller

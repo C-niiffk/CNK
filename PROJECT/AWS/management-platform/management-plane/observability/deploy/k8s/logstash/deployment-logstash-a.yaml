@@ -1,0 +1,79 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: logstash-a
+  namespace: observability
+  labels:
+    app: logstash
+    site: a
+    instance: logstash-a
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      instance: logstash-a
+  template:
+    metadata:
+      labels:
+        app: logstash
+        site: a
+        instance: logstash-a
+    spec:
+      nodeSelector:
+        site: a
+      terminationGracePeriodSeconds: 40
+      containers:
+      - name: logstash
+        image: docker.elastic.co/logstash/logstash:8.19.4
+        ports:
+        - containerPort: 5044
+        - containerPort: 9600
+        env:
+        - name: ES_URL
+          value: '@@ES_A@@'
+        - name: LS_JAVA_OPTS
+          value: -Xms256m -Xmx256m
+        resources:
+          requests:
+            cpu: 100m
+            memory: 768Mi
+          limits:
+            memory: 768Mi
+        imagePullPolicy: IfNotPresent
+        volumeMounts:
+        - name: pipeline
+          mountPath: /usr/share/logstash/pipeline
+        readinessProbe:
+          tcpSocket:
+            port: 5044
+          periodSeconds: 5
+      - name: storage-readiness
+        image: curlimages/curl:8.12.1
+        command:
+        - /bin/sh
+        - -c
+        - while true; do sleep 3600; done
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - curl --fail --silent --max-time 3 @@ES_A@@/_cluster/health >/dev/null
+          periodSeconds: 5
+          timeoutSeconds: 4
+          failureThreshold: 2
+        resources:
+          requests:
+            cpu: 10m
+            memory: 24Mi
+          limits:
+            memory: 48Mi
+      volumes:
+      - name: pipeline
+        configMap:
+          name: logstash-pipeline

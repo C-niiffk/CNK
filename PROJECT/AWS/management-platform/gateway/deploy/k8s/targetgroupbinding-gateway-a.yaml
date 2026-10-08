@@ -1,0 +1,12 @@
+apiVersion: elbv2.k8s.aws/v1beta1
+kind: TargetGroupBinding
+metadata:
+  name: gateway-a
+  namespace: gateway
+spec:
+  vpcID: '@@VPC_ID@@'
+  targetGroupARN: '@@TG_GATEWAY_A@@'
+  targetType: ip
+  serviceRef:
+    name: gateway-a
+    port: 8080

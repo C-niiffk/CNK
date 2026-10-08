@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager-a
+  namespace: observability
+spec:
+  selector:
+    instance: alertmanager-a
+  ports:
+  - name: p9093
+    port: 9093
+    targetPort: 9093
+  - name: p9094
+    port: 9094
+    targetPort: 9094
+  - name: gossip-udp
+    port: 9094
+    targetPort: 9094
+    protocol: UDP

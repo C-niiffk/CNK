@@ -1,0 +1,19 @@
+replicaCount: 2
+serviceAccount:
+  create: true
+  name: aws-load-balancer-controller
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+    - labelSelector:
+        matchLabels:
+          app.kubernetes.io/name: aws-load-balancer-controller
+      topologyKey: topology.kubernetes.io/zone
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 512Mi
+enableBackendSecurityGroup: false
+enableManageBackendSecurityGroupRules: false

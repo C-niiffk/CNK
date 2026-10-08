@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana-a
+  namespace: observability
+  labels:
+    app: grafana
+    site: a
+    instance: grafana-a
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      instance: grafana-a
+  template:
+    metadata:
+      labels:
+        app: grafana
+        site: a
+        instance: grafana-a
+    spec:
+      nodeSelector:
+        site: a
+      terminationGracePeriodSeconds: 40
+      containers:
+      - name: grafana
+        image: grafana/grafana:11.6.0
+        ports:
+        - containerPort: 3000
+        env:
+        - name: GF_AUTH_ANONYMOUS_ENABLED
+          value: 'false'
+        - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+          value: Viewer
+        - name: GF_USERS_ALLOW_SIGN_UP
+          value: 'false'
+        - name: GF_SECURITY_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: runtime
+              key: ADMIN_PASSWORD
+        - name: GF_SECURITY_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: runtime
+              key: JWT_SECRET
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            memory: 256Mi
+        imagePullPolicy: IfNotPresent
+        volumeMounts:
+        - name: provision
+          mountPath: /etc/grafana/provisioning/datasources
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: 3000
+          periodSeconds: 5
+      volumes:
+      - name: provision
+        configMap:
+          name: grafana

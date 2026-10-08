@@ -1,0 +1,23 @@
+[Unit]
+Description=App2 Filebeat to Site a (Podman)
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+Image=docker.elastic.co/beats/filebeat:8.19.4
+ContainerName=app2-filebeat-a
+Network=host
+User=0
+EnvironmentFile=/etc/management/filebeat-a.env
+Volume=/etc/management/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro,z
+Volume=/var/log/management/app2:/logs:ro,z
+Volume=/var/lib/management/filebeat-a:/usr/share/filebeat/data:Z
+Exec=-e -c /usr/share/filebeat/filebeat.yml
+
+[Service]
+Restart=always
+RestartSec=10
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

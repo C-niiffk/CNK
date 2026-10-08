@@ -1,0 +1,25 @@
+filebeat.inputs:
+  - type: filestream
+    id: app2-application
+    enabled: true
+    paths: ["/logs/application.log*"]
+    prospector.scanner.exclude_files: ['\.gz$']
+    parsers:
+      - multiline:
+          type: pattern
+          pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+          negate: true
+          match: after
+processors:
+  - add_fields:
+      target: platform
+      fields:
+        service: app2
+        site: ${SITE}
+        source_id: ${HOST_ID}
+output.logstash:
+  hosts: ["${LOGSTASH_HOST}"]
+logging.level: warning
+
+queue.disk:
+  max_size: 1GB

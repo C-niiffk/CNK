@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager-b
+  namespace: observability
+  labels:
+    app: alertmanager
+    site: b
+    instance: alertmanager-b
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      instance: alertmanager-b
+  template:
+    metadata:
+      labels:
+        app: alertmanager
+        site: b
+        instance: alertmanager-b
+    spec:
+      nodeSelector:
+        site: b
+      terminationGracePeriodSeconds: 40
+      containers:
+      - name: alertmanager
+        image: prom/alertmanager:v0.28.1
+        ports:
+        - containerPort: 9093
+        - containerPort: 9094
+        env: []
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            memory: 128Mi
+        imagePullPolicy: IfNotPresent
+        args:
+        - --config.file=/etc/alertmanager/alertmanager.yml
+        - --storage.path=/alertmanager
+        - --cluster.listen-address=0.0.0.0:9094
+        - --cluster.peer=alertmanager-a.observability.svc:9094
+        volumeMounts:
+        - name: config
+          mountPath: /etc/alertmanager
+        readinessProbe:
+          httpGet:
+            path: /-/ready
+            port: 9093
+          periodSeconds: 5
+      volumes:
+      - name: config
+        configMap:
+          name: alertmanager

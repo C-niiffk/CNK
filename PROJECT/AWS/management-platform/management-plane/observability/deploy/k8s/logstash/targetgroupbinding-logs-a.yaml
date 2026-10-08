@@ -1,0 +1,12 @@
+apiVersion: elbv2.k8s.aws/v1beta1
+kind: TargetGroupBinding
+metadata:
+  name: logs-a
+  namespace: observability
+spec:
+  vpcID: '@@VPC_ID@@'
+  targetGroupARN: '@@DISC_A_LOGSTASH@@'
+  targetType: ip
+  serviceRef:
+    name: logstash-a
+    port: 5044

@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus-a
+  namespace: observability
+  labels:
+    app: prometheus
+    site: a
+    instance: prometheus-a
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      instance: prometheus-a
+  template:
+    metadata:
+      labels:
+        app: prometheus
+        site: a
+        instance: prometheus-a
+    spec:
+      nodeSelector:
+        site: a
+      terminationGracePeriodSeconds: 40
+      containers:
+      - name: prometheus
+        image: prom/prometheus:v3.2.1
+        ports:
+        - containerPort: 9090
+        env: []
+        resources:
+          requests:
+            cpu: 100m
+            memory: 512Mi
+          limits:
+            memory: 512Mi
+        imagePullPolicy: IfNotPresent
+        args:
+        - --config.file=/etc/prometheus/prometheus.yml
+        - --storage.tsdb.path=/prometheus
+        - --storage.tsdb.retention.time=3d
+        - --web.enable-lifecycle
+        volumeMounts:
+        - name: config
+          mountPath: /etc/prometheus
+        - name: data
+          mountPath: /prometheus
+        - name: rules
+          mountPath: /rules
+        readinessProbe:
+          httpGet:
+            path: /-/ready
+            port: 9090
+          periodSeconds: 5
+      - name: rule-sync
+        image: '@@IMAGE_RULE_SYNC@@'
+        ports: []
+        env:
+        - name: MANAGEMENT_URL
+          value: http://management.platform.svc:8080
+        - name: ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: runtime
+              key: ADMIN_PASSWORD
+        resources:
+          requests:
+            cpu: 100m
+            memory: 96Mi
+          limits:
+            memory: 96Mi
+        imagePullPolicy: IfNotPresent
+        volumeMounts:
+        - name: rules
+          mountPath: /rules
+      volumes:
+      - name: config
+        configMap:
+          name: prometheus
+      - name: data
+        persistentVolumeClaim:
+          claimName: prom-data-a
+      - name: rules
+        emptyDir: {}
+      serviceAccountName: prometheus
+      securityContext:
+        fsGroup: 65534

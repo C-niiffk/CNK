@@ -1,0 +1,28 @@
+[Unit]
+Description=Management Platform App2 (RHEL host JVM)
+Wants=network-online.target
+After=network-online.target
+RequiresMountsFor=/var/lib/management/app2
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=app2
+Group=app2
+WorkingDirectory=/var/lib/management/app2
+EnvironmentFile=/etc/management/app2.env
+ExecStartPre=/usr/bin/mountpoint -q /var/lib/management/app2
+ExecStart=/usr/bin/java -Xms128m -Xmx512m -Duser.home=/var/lib/management/app2 -Dsun.net.inetaddr.ttl=10 -Dskywalking.agent.force_tls=false -javaagent:/opt/management/app2/current/skywalking-agent/skywalking-agent.jar -jar /opt/management/app2/current/app.jar
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=60
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/management/app2 /var/log/management/app2
+
+[Install]
+WantedBy=multi-user.target

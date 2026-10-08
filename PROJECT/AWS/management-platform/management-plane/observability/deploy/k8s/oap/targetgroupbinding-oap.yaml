@@ -1,0 +1,12 @@
+apiVersion: elbv2.k8s.aws/v1beta1
+kind: TargetGroupBinding
+metadata:
+  name: oap
+  namespace: observability
+spec:
+  vpcID: '@@VPC_ID@@'
+  targetGroupARN: '@@TCP_OAP@@'
+  targetType: ip
+  serviceRef:
+    name: oap
+    port: 11800

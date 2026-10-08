@@ -1,0 +1,24 @@
+[Unit]
+Description=EC2 Node Exporter (Podman)
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+Image=quay.io/prometheus/node-exporter:v1.9.1
+ContainerName=app2-node-exporter
+Network=host
+User=65534
+# Host metrics require host PID visibility and a read-only host root.
+PodmanArgs=--pid=host
+Volume=/:/host:ro,rslave
+# Disable labeling for this monitoring container only. Never relabel host /.
+SecurityLabelDisable=true
+Exec=--path.rootfs=/host --web.listen-address=:9100
+
+[Service]
+Restart=always
+RestartSec=10
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

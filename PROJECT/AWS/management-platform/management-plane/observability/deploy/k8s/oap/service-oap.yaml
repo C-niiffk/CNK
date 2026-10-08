@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: oap
+  namespace: observability
+spec:
+  selector:
+    app: oap
+  ports:
+  - name: p11800
+    port: 11800
+    targetPort: 11800
+  - name: p12800
+    port: 12800
+    targetPort: 12800

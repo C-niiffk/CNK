@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway-a
+  namespace: gateway
+spec:
+  selector:
+    instance: gateway-a
+  ports:
+  - name: p8080
+    port: 8080
+    targetPort: 8080

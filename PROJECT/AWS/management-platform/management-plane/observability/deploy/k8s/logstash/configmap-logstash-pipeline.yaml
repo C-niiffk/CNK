@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: logstash-pipeline
+  namespace: observability
+data:
+  logstash.conf: |
+    input { beats { port => 5044 } }
+    filter { fingerprint { source => ["message", "[platform][source_id]", "[log][file][path]", "[log][offset]"] concatenate_sources => true target => "[@metadata][fingerprint]" method => "SHA256" } }
+    output { elasticsearch { hosts => ["${ES_URL}"] index => "platform-%{+YYYY.MM.dd}" document_id => "%{[@metadata][fingerprint]}" ilm_enabled => false } }

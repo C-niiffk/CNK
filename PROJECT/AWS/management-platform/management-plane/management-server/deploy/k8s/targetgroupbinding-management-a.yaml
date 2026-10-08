@@ -1,0 +1,12 @@
+apiVersion: elbv2.k8s.aws/v1beta1
+kind: TargetGroupBinding
+metadata:
+  name: management-a
+  namespace: platform
+spec:
+  vpcID: '@@VPC_ID@@'
+  targetGroupARN: '@@TG_MANAGEMENT_A@@'
+  targetType: ip
+  serviceRef:
+    name: management-a
+    port: 8080
