@@ -43,8 +43,8 @@ resource "aws_db_instance" "oracle" {
   engine_version                  = var.oracle_engine_version
   license_model                   = "license-included"
   instance_class                  = var.db_instance_class
-  allocated_storage               = 10
-  max_allocated_storage           = 20
+  allocated_storage               = 20
+  max_allocated_storage           = 50
   storage_type                    = "gp3"
   storage_encrypted               = true
   db_name                         = "MPDB"

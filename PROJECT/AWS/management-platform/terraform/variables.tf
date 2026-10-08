@@ -52,7 +52,7 @@ variable "ec2_instance_type" {
 
 variable "es_instance_type" {
   type    = string
-  default = "t3.meidum"
+  default = "t3.medium"
 }
 
 variable "db_instance_class" {
@@ -169,5 +169,25 @@ variable "es_ami_owner" {
   validation {
     condition     = can(regex("^[0-9]{12}$", var.es_ami_owner))
     error_message = "es_ami_owner must be a 12-digit AWS account ID."
+  }
+}
+
+variable "app2_root_gib" {
+  description = "RHEL App2 root disk; must also be at least the selected AMI root snapshot size."
+  type        = number
+  default     = 30
+  validation {
+    condition     = var.app2_root_gib >= 20 && floor(var.app2_root_gib) == var.app2_root_gib
+    error_message = "app2_root_gib must be an integer of at least 20 GiB."
+  }
+}
+
+variable "es_root_gib" {
+  description = "RHEL ES root disk, including /var/lib/elasticsearch; retained on instance termination."
+  type        = number
+  default     = 50
+  validation {
+    condition     = var.es_root_gib >= 30 && floor(var.es_root_gib) == var.es_root_gib
+    error_message = "es_root_gib must be an integer of at least 30 GiB."
   }
 }

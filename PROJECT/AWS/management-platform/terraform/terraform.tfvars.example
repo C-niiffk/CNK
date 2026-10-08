@@ -1,0 +1,32 @@
+region = "us-east-1"
+project = "management-platform"
+environment = "lab"
+allowed_cidrs = ["203.0.113.10/32"] # REPLACE with your actual public IP.
+operator_arn = "arn:aws:iam::123456789012:role/YourOperatorRole" # IAM role ARN, not an STS assumed-role session ARN.
+oracle_engine_version = "REPLACE_WITH_CURRENT_ORDERABLE_ORACLE_19C_VERSION"
+db_instance_class = "db.t3.small"
+eks_version = "1.35"
+single_nat_gateway = false
+protect_data = true
+deploy_ec2_apps = true
+image_tag = "v1"
+# Optional HTTPS certificate in this region; blank enables restricted HTTP lab access.
+certificate_arn = ""
+public_hostname = ""
+
+
+# App2 is deployed manually from a JAR bundle after Terraform creates its host.
+# Pick a RHEL 9 x86_64 AMI available in your region. Do not use an AL2023 AMI.
+app2_ami_id = ""
+app2_ami_owner = "309956199498"
+app2_key_name = ""
+app2_data_gib = 20
+# deploy_ec2_apps=true creates one RHEL instance in EACH AZ; both use the same HA target group.
+# Each EBS is disposable working data; prevent_destroy retains it until explicitly reviewed.
+
+# Elasticsearch: RHEL 9 x86_64 + native RPM/systemd, no Docker/Podman.
+# Choose a real AMI in the deployment region (may match app2_ami_id).
+es_ami_id = "ami-REPLACE_WITH_RHEL9_X86_64"
+es_ami_owner = "309956199498"
+# Existing ES sizing is unchanged by this patch.
+es_instance_type = "t3.medium"
