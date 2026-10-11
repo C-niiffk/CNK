@@ -35,7 +35,11 @@ if args.action=='secrets':
   desc=aws('secretsmanager','describe-secret','--secret-id',meta['runtime_secret_arn'])
   if desc.get('VersionIdsToStages'):raise
   secret={}
- for k in ['MGMT_DB_PASSWORD','GRDC_A_DB_PASSWORD','GRDC_B_DB_PASSWORD','APP2_DB_PASSWORD','NACOS_PASSWORD','ADMIN_PASSWORD','NACOS_IDENTITY_VALUE']:
+ for k in ('MGMT_DB_PASSWORD', 'APP2_DB_PASSWORD', 'GRDC_A_DB_PASSWORD', 'GRDC_B_DB_PASSWORD'):
+  secret.setdefault(k, 'Aa1' + secrets.token_hex(12))
+  if not isinstance(secret[k],str) or not re.fullmatch(r'[A-Za-z0-9]{24,30}',secret[k]):
+   raise SystemExit(k + ': invalid Oracle password; run repair-db-passwords.py before initialization')
+ for k in ['NACOS_PASSWORD','ADMIN_PASSWORD','NACOS_IDENTITY_VALUE']:
   secret.setdefault(k,secrets.token_hex(24))
  for k in ['JWT_SECRET','NACOS_AUTH_TOKEN']:secret.setdefault(k,base64.b64encode(secrets.token_bytes(48)).decode())
  secret['REDIS_PASSWORD']=aws('secretsmanager','get-secret-value','--secret-id',meta['redis_secret_arn'])['SecretString']
