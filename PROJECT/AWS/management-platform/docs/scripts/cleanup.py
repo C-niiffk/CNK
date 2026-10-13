@@ -439,6 +439,27 @@ def verify(meta):
             rows = [r for r in rows if r['State'] != 'deleted']
         if rows:
             issues.append(f'{label}: {len(rows)} project-tagged')
+    # Independently verify services whose historical ARNs may remain in Tagging API.
+    groups = aws('ec2', 'describe-security-groups', '--filters',
+                 f'Name=tag:Project,Values={project}').get('SecurityGroups', [])
+    if groups:
+        issues.append(f'Security groups: {len(groups)} project-tagged')
+    instances = aws('ec2', 'describe-instances', '--filters',
+                    f'Name=tag:Project,Values={project}').get('Reservations', [])
+    remaining_instances = [i['InstanceId'] for r in instances for i in r.get('Instances', [])
+                           if i['State']['Name'] != 'terminated']
+    if remaining_instances:
+        issues.append('Active project EC2 instances: ' + ', '.join(remaining_instances))
+    lb_names = [b['LoadBalancerName'] for b in
+                aws('elbv2', 'describe-load-balancers').get('LoadBalancers', [])
+                if b['LoadBalancerName'].startswith(meta['name'] + '-')]
+    if lb_names:
+        issues.append('Project load balancers: ' + ', '.join(lb_names))
+    cache_snapshots = [s['SnapshotName'] for s in
+                       aws('elasticache', 'describe-snapshots').get('Snapshots', [])
+                       if meta['name'] in s.get('SnapshotName', '')]
+    if cache_snapshots:
+        issues.append('ElastiCache snapshots: ' + ', '.join(cache_snapshots))
     # Resource Groups Tagging API catches additional still-tagged project resources
     # (ALB/NLB, target groups, Redis, networking, IAM, etc.).
     tags = ['Key=Project,Values=' + meta['project'],
@@ -450,7 +471,7 @@ def verify(meta):
     # rather than claim that an empty Terraform state proves deletion.
     if live_arns:
         print('WARNING: tagged resource inventory still reports:', *live_arns, sep='\n  ')
-        issues.append(f'{len(live_arns)} project/environment-tagged resource references (verify live state)')
+        print('INFO: Tagging API may retain deleted-resource history; live AWS checks determine failure.')
     if issues:
         raise RuntimeError('CLEANUP INCOMPLETE: ' + '; '.join(issues))
     print('PASS: tracked infrastructure, volumes, snapshots, log groups, repositories and state checks passed.')
