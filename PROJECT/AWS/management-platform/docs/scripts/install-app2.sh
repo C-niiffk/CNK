@@ -6,7 +6,15 @@ metadata=$(realpath "${1:?Deployment JSON required}")
 secret=$(realpath "${2:?Secret JSON required}")
 site=${3:?Site a or b required}
 [[ "$site" == a || "$site" == b ]] || exit 1
-initialize=${4:-}
+initialize=""
+reuse=false
+for flag in "${@:4}"; do
+ case "$flag" in
+  --initialize-empty) initialize=--initialize-empty ;;
+  --reuse-release) reuse=true ;;
+  *) echo "Unknown option: $flag" >&2; exit 1 ;;
+ esac
+done
 bundle=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$bundle"
 sha256sum -c SHA256SUMS >/dev/null
@@ -32,9 +40,14 @@ install -d -m 755 /opt/management/app2/releases /etc/containers/systemd
 version=$(cat payload/VERSION)
 [[ "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || exit 1
 release=/opt/management/app2/releases/$version
-[[ ! -e "$release" ]] || { echo "Release $version already exists; choose a new immutable version" >&2; exit 1; }
-mkdir "$release"
-cp -R payload/app.jar payload/skywalking-agent "$release/"
+if [[ -e "$release" ]]; then
+ [[ "$reuse" == true ]] || { echo "Release $version already exists; choose a new immutable version" >&2; exit 1; }
+ cmp payload/app.jar "$release/app.jar"
+ diff -qr payload/skywalking-agent "$release/skywalking-agent"
+else
+ mkdir "$release"
+ cp -R payload/app.jar payload/skywalking-agent "$release/"
+fi
 chown -R root:root "$release"
 chmod -R u=rwX,go=rX "$release"
 # Pull before stopping Java, so registry failure does not interrupt the app.

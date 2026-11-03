@@ -1,0 +1,288 @@
+name: Management Platform
+on:
+  pull_request:
+    branches:
+    - main
+  push:
+    branches:
+    - main
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Select the manual deployment path
+        type: choice
+        options:
+        - application
+        - infrastructure
+        default: application
+      apply:
+        description: Apply the saved plan after environment approval
+        type: boolean
+        default: false
+      build_all:
+        description: Build all images (required for the first release)
+        type: boolean
+        default: true
+      rollback_release:
+        description: Existing release ID to restore; leave blank for a new release
+        type: string
+        default: ''
+      initialize_app2:
+        description: Allow formatting EMPTY App2 data volumes on first deployment only
+        type: boolean
+        default: false
+permissions:
+  contents: read
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  AWS_DEFAULT_REGION: ${{ vars.AWS_REGION }}
+  AWS_PAGER: ''
+  ARTIFACT_BUCKET: ${{ vars.ARTIFACT_BUCKET }}
+  TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+  TF_STATE_KEY: ${{ vars.TF_STATE_KEY }}
+  TF_VARS_JSON: ${{ vars.TF_VARS_JSON }}
+  TF_IN_AUTOMATION: 'true'
+  TF_INPUT: 'false'
+jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      images: ${{ steps.select.outputs.images }}
+      has_images: ${{ steps.select.outputs.has_images }}
+      deploy: ${{ steps.select.outputs.deploy }}
+      infra: ${{ steps.select.outputs.infra }}
+    steps:
+    - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+    - id: select
+      env:
+        BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        BUILD_ALL: ${{ inputs.build_all }}
+        MANUAL_TARGET: ${{ inputs.target }}
+        ROLLBACK_RELEASE: ${{ inputs.rollback_release }}
+      run: |
+        EXTRA=()
+        if [[ "$BUILD_ALL" == true ]]; then EXTRA+=(--all); fi
+        python3 docs/scripts/cicd.py changes --base "$BASE" \
+          --target "$MANUAL_TARGET" --rollback "$ROLLBACK_RELEASE" "${EXTRA[@]}"
+  checks:
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      with:
+        persist-credentials: false
+    - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
+      with:
+        distribution: temurin
+        java-version: '21'
+        cache: maven
+    - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+      with:
+        python-version: '3.12'
+    - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+    - run: python3 -m pip install PyYAML==6.0.3
+    - run: mvn -B -ntp verify
+    - run: python3 -m compileall -q docs/scripts
+    - run: python3 docs/scripts/test-cicd.py
+    - name: Check selected Docker images without AWS access
+      if: needs.changes.outputs.has_images == 'true' && inputs.rollback_release == ''
+      env:
+        COMPONENTS: ${{ needs.changes.outputs.images }}
+      run: python3 docs/scripts/cicd.py check-images --components "$COMPONENTS"
+    needs: changes
+    timeout-minutes: 60
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+    - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      with:
+        persist-credentials: false
+    - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
+      with:
+        terraform_version: 1.13.5
+        terraform_wrapper: false
+    - run: terraform -chdir=terraform fmt -check -recursive
+    - run: terraform -chdir=terraform init -backend=false -input=false
+    - run: terraform -chdir=terraform validate
+  plan:
+    needs:
+    - changes
+    - checks
+    - validate
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.INFRA_ENABLED == 'true' &&
+      needs.changes.outputs.infra == 'true'
+    runs-on: ubuntu-24.04
+    environment: aws-terraform-plan
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+    - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      with:
+        persist-credentials: false
+    - uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708
+      with:
+        role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+        aws-region: ${{ vars.AWS_REGION }}
+        mask-aws-account-id: true
+    - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
+      with:
+        terraform_version: 1.13.5
+        terraform_wrapper: false
+    - run: python3 docs/scripts/cicd.py prepare
+    - run: terraform -chdir=terraform init -input=false -backend-config=backend.hcl
+    - run: |
+        terraform -chdir=terraform plan -input=false -lock-timeout=5m \
+          -out=../.ha-work/infra.tfplan > .ha-work/plan.log
+        terraform -chdir=terraform show -json ../.ha-work/infra.tfplan | python3 docs/scripts/cicd.py summary
+        python3 docs/scripts/cicd.py plan save
+    - if: always()
+      run: rm -rf -- .ha-work terraform/ci.auto.tfvars.json terraform/backend.hcl
+  apply:
+    needs: plan
+    if: |-
+      github.ref == 'refs/heads/main' && ((github.event_name == 'workflow_dispatch' && inputs.apply) ||
+       (github.event_name == 'push' && vars.INFRA_APPLY_ENABLED == 'true'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    environment: aws-terraform-apply
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+    - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      with:
+        persist-credentials: false
+    - uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708
+      with:
+        role-to-assume: ${{ vars.AWS_APPLY_ROLE_ARN }}
+        aws-region: ${{ vars.AWS_REGION }}
+        role-duration-seconds: 7200
+        mask-aws-account-id: true
+    - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
+      with:
+        terraform_version: 1.13.5
+        terraform_wrapper: false
+    - run: python3 docs/scripts/cicd.py prepare
+    - run: terraform -chdir=terraform init -input=false -backend-config=backend.hcl
+    - run: python3 docs/scripts/cicd.py plan restore
+    - run: terraform -chdir=terraform apply -input=false -lock-timeout=5m ../.ha-work/infra.tfplan
+    - if: always()
+      run: rm -rf -- .ha-work terraform/ci.auto.tfvars.json terraform/backend.hcl
+  publish:
+    needs:
+    - changes
+    - checks
+    - validate
+    - plan
+    - apply
+    if: always() && !cancelled() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.PUBLISH_ENABLED
+      == 'true' && inputs.rollback_release == '' && needs.changes.result == 'success' && needs.checks.result ==
+      'success' && needs.validate.result == 'success' && needs.changes.outputs.has_images == 'true' && (needs.changes.outputs.infra
+      == 'false' || needs.apply.result == 'success')
+    runs-on: ubuntu-24.04
+    environment: aws-build
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        component: ${{ fromJSON(needs.changes.outputs.images) }}
+    steps:
+    - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      with:
+        persist-credentials: false
+    - uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708
+      with:
+        role-to-assume: ${{ vars.AWS_BUILD_ROLE_ARN }}
+        aws-region: ${{ vars.AWS_REGION }}
+        role-session-name: mp-build-${{ github.run_id }}
+        mask-aws-account-id: true
+    - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+    - env:
+        COMPONENT: ${{ matrix.component }}
+      run: |
+        TAG="sha-${GITHUB_SHA:0:12}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+        python3 docs/scripts/cicd.py prepare --build
+        python3 docs/scripts/build-images.py --tag "$TAG" --only "$COMPONENT"
+        python3 docs/scripts/cicd.py publish --component "$COMPONENT" --tag "$TAG"
+  deploy:
+    needs:
+    - changes
+    - checks
+    - validate
+    - plan
+    - apply
+    - publish
+    if: always() && !cancelled() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED
+      == 'true' && needs.changes.result == 'success' && needs.checks.result == 'success' && needs.validate.result
+      == 'success' && needs.changes.outputs.deploy == 'true' && (needs.publish.result == 'success' || (needs.publish.result
+      == 'skipped' && needs.changes.outputs.has_images == 'false')) && (needs.changes.outputs.infra == 'false' ||
+      needs.apply.result == 'success')
+    runs-on:
+    - codebuild-${{ vars.CODEBUILD_PROJECT }}-${{ github.run_id }}-${{ github.run_attempt }}
+    timeout-minutes: 85
+    environment: aws-application
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+    - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      with:
+        persist-credentials: false
+    - uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708
+      with:
+        role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+        aws-region: ${{ vars.AWS_REGION }}
+        role-session-name: mp-deploy-${{ github.run_id }}
+        role-duration-seconds: 7200
+        unset-current-credentials: true
+        mask-aws-account-id: true
+    - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+      with:
+        python-version: '3.12'
+    - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
+      with:
+        terraform_version: 1.13.5
+        terraform_wrapper: false
+    - run: python3 -m pip install PyYAML==6.0.3
+    - name: Install kubectl
+      run: |
+        TOOLS="$RUNNER_TEMP/mp-tools"
+        mkdir -p "$TOOLS"
+        curl -fsSL https://dl.k8s.io/release/v1.35.0/bin/linux/amd64/kubectl -o "$TOOLS/kubectl"
+        curl -fsSL https://dl.k8s.io/release/v1.35.0/bin/linux/amd64/kubectl.sha256 -o "$TOOLS/kubectl.sha256"
+        printf '%s  %s\n' "$(cat "$TOOLS/kubectl.sha256")" "$TOOLS/kubectl" | sha256sum -c -
+        chmod 755 "$TOOLS/kubectl"
+        printf '%s\n' "$TOOLS" >> "$GITHUB_PATH"
+    - run: python3 docs/scripts/cicd.py prepare
+    - run: terraform -chdir=terraform init -input=false -backend-config=backend.hcl
+    - env:
+        COMPONENTS: ${{ needs.changes.outputs.images }}
+        ROLLBACK_RELEASE: ${{ inputs.rollback_release }}
+        INITIALIZE_APP2: ${{ inputs.initialize_app2 }}
+      run: |
+        EXTRA=()
+        if [[ "$INITIALIZE_APP2" == true ]]; then EXTRA+=(--initialize-app2); fi
+        python3 docs/scripts/cicd.py resolve --components "$COMPONENTS" \
+          --rollback "$ROLLBACK_RELEASE" "${EXTRA[@]}"
+        aws eks update-kubeconfig --name "$(jq -r .cluster_name .ha-work/deployment.json)" --region "$AWS_REGION"
+        python3 docs/scripts/deploy.py secrets --existing-only
+        python3 docs/scripts/deploy.py apply
+        if [[ "$(jq -r .deploy_app2 .ha-work/release.json)" == true ]]; then
+          HOST_FLAGS=()
+          if [[ "$INITIALIZE_APP2" == true ]]; then HOST_FLAGS+=(--initialize-empty); fi
+          python3 docs/scripts/cicd.py deploy-vm --bundle .ha-work/app2-cd.tgz "${HOST_FLAGS[@]}"
+        fi
+        python3 docs/scripts/cicd.py verify
+        python3 docs/scripts/cicd.py promote
+    - if: always()
+      run: rm -rf -- .ha-work .cicd-work terraform/ci.auto.tfvars.json terraform/backend.hcl
+concurrency:
+  group: management-platform-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number)
+    || 'deployment' }}
+  cancel-in-progress: false
+  queue: max

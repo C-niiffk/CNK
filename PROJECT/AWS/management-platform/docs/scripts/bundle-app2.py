@@ -6,7 +6,8 @@ p=argparse.ArgumentParser();p.add_argument('--version',required=True);a=p.parse_
 import re
 if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,63}',a.version):raise SystemExit('Invalid version')
 m=json.loads((w/'deployment.json').read_text());tags=json.loads((w/'image-tags.json').read_text())
-image=m['ecr']['application-service']+':'+tags['application-service']
+refs=json.loads((w/'image-refs.json').read_text()) if (w/'image-refs.json').exists() else {}
+image=refs.get('application-service',m['ecr']['application-service']+':'+tags['application-service'])
 def run(*cmd):return subprocess.check_output(list(cmd),text=True).strip()
 run('docker','pull','--platform','linux/amd64',image)
 with tempfile.TemporaryDirectory() as d:

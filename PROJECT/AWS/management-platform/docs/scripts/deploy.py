@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Manual deployment. No credentials are printed or committed; all subprocess arguments are arrays."""
 import yaml
-import argparse,base64,json,os,pathlib,re,secrets,subprocess
+import argparse,base64,hashlib,json,os,pathlib,re,secrets,subprocess
 ROOT=pathlib.Path(__file__).resolve().parents[2]
 WORK=ROOT/'.ha-work'
 def run(args,body=None,capture=False):
@@ -18,6 +18,7 @@ parser.add_argument('action',choices=['secrets','render','apply','lbc'])
 parser.add_argument('--metadata',default=str(WORK/'deployment.json'))
 parser.add_argument('--tag',default='ha-v1')
 parser.add_argument('--only',choices=['grdc','observability','agents','management','gateway','app1','routing'])
+parser.add_argument('--existing-only',action='store_true',help='Read existing credentials only; never generate or write Secrets Manager values')
 args=parser.parse_args()
 if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,63}',args.tag):raise SystemExit('Invalid image tag')
 meta=json.loads(pathlib.Path(args.metadata).read_text());os.environ['AWS_DEFAULT_REGION']=meta['region']
@@ -31,20 +32,26 @@ if args.action=='secrets':
  for ns_file in ns_files:apply(yaml.safe_load(ns_file.read_text()))
  try: secret=read_secret(meta['runtime_secret_arn'])
  except subprocess.CalledProcessError:
+  if args.existing_only:raise
   # Distinguish an empty new secret from an IAM/network error.
   desc=aws('secretsmanager','describe-secret','--secret-id',meta['runtime_secret_arn'])
   if desc.get('VersionIdsToStages'):raise
   secret={}
+ if args.existing_only:
+  required=['MGMT_DB_PASSWORD','APP2_DB_PASSWORD','GRDC_A_DB_PASSWORD','GRDC_B_DB_PASSWORD','NACOS_PASSWORD','ADMIN_PASSWORD','NACOS_IDENTITY_VALUE','JWT_SECRET','NACOS_AUTH_TOKEN']
+  if any(not isinstance(secret.get(k),str) or not secret[k] for k in required):
+   raise SystemExit('Initialize runtime credentials and SQL before CI/CD. No values were generated.')
  for k in ('MGMT_DB_PASSWORD', 'APP2_DB_PASSWORD', 'GRDC_A_DB_PASSWORD', 'GRDC_B_DB_PASSWORD'):
-  secret.setdefault(k, 'Aa1' + secrets.token_hex(12))
+  if not args.existing_only:secret.setdefault(k, 'Aa1' + secrets.token_hex(12))
   if not isinstance(secret[k],str) or not re.fullmatch(r'[A-Za-z0-9]{24,30}',secret[k]):
    raise SystemExit(k + ': invalid Oracle password; run repair-db-passwords.py before initialization')
  for k in ['NACOS_PASSWORD','ADMIN_PASSWORD','NACOS_IDENTITY_VALUE']:
-  secret.setdefault(k,secrets.token_hex(24))
- for k in ['JWT_SECRET','NACOS_AUTH_TOKEN']:secret.setdefault(k,base64.b64encode(secrets.token_bytes(48)).decode())
+  if not args.existing_only:secret.setdefault(k,secrets.token_hex(24))
+ for k in ['JWT_SECRET','NACOS_AUTH_TOKEN']:
+  if not args.existing_only:secret.setdefault(k,base64.b64encode(secrets.token_bytes(48)).decode())
  secret['REDIS_PASSWORD']=aws('secretsmanager','get-secret-value','--secret-id',meta['redis_secret_arn'])['SecretString']
  private(WORK/'runtime.json',json.dumps(secret))
- aws('secretsmanager','put-secret-value','--secret-id',meta['runtime_secret_arn'],'--secret-string','file://'+str(WORK/'runtime.json'))
+ if not args.existing_only:aws('secretsmanager','put-secret-value','--secret-id',meta['runtime_secret_arn'],'--secret-string','file://'+str(WORK/'runtime.json'))
  for ns in ['platform','grdc','gateway','applications','observability']:
   apply({'apiVersion':'v1','kind':'Secret','metadata':{'name':'runtime','namespace':ns},'type':'Opaque','stringData':secret})
  print('Runtime credentials saved; existing values preserved. Local file: .ha-work/runtime.json (0600)')
@@ -60,7 +67,11 @@ ctx={'VPC_ID':meta['vpc_id'],'REGION':meta['region'],'DB_URL':meta['db']['manage
 tag_file=WORK/'image-tags.json'
 image_tags=json.loads(tag_file.read_text()) if tag_file.exists() else {}
 if any(not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,63}',v) for v in image_tags.values()):raise SystemExit('Invalid image-tags.json')
-ctx.update({'IMAGE_'+k.upper().replace('-','_'):v+':'+image_tags.get(k,args.tag) for k,v in meta['ecr'].items()})
+image_refs=json.loads((WORK/'image-refs.json').read_text()) if (WORK/'image-refs.json').exists() else {}
+for component,reference in image_refs.items():
+ if component not in meta['ecr'] or not re.fullmatch(re.escape(meta['ecr'][component])+r'@sha256:[0-9a-f]{64}',reference):
+  raise SystemExit('Invalid digest reference in image-refs.json')
+ctx.update({'IMAGE_'+k.upper().replace('-','_'):image_refs.get(k,v+':'+image_tags.get(k,args.tag)) for k,v in meta['ecr'].items()})
 ctx.update({'TG_'+k.upper().replace('-','_'):v for k,v in meta['http_targets'].items()})
 ctx.update({'TCP_'+k.upper().replace('-','_'):v for k,v in meta['tcp_targets'].items()})
 ctx.update({'DISC_'+k.upper().replace('-','_'):v for k,v in meta['discovery_targets'].items()})
@@ -86,6 +97,13 @@ priority={'Namespace':0,'StorageClass':1,'ServiceAccount':2,'ClusterRole':2,'Clu
 files=[p for rel in groups.values() for p in (ROOT/rel).rglob('*.yaml')]
 rendered={str(p.relative_to(ROOT)):expand(yaml.safe_load(p.read_text())) for p in files}
 out=WORK/'rendered';out.mkdir(exist_ok=True)
+# Changes to group ConfigMaps trigger a rolling update for consumers of that group.
+for group,rel in groups.items():
+ configs=[obj for name,obj in sorted(rendered.items()) if name.startswith(rel+'/') and obj['kind']=='ConfigMap']
+ checksum=hashlib.sha256(json.dumps(configs,sort_keys=True).encode()).hexdigest()
+ for name,obj in rendered.items():
+  if name.startswith(rel+'/') and obj['kind'] in ('Deployment','DaemonSet'):
+   obj['spec']['template'].setdefault('metadata',{}).setdefault('annotations',{})['management-platform/config-checksum']=checksum
 for name,obj in rendered.items():
  path=out/name;path.parent.mkdir(parents=True,exist_ok=True)
  path.write_text(yaml.safe_dump(obj,sort_keys=False,allow_unicode=True))
@@ -97,8 +115,10 @@ if args.action=='apply':
  for p in (ROOT/'global-lb/deploy/k8s').glob('storageclass-*.yaml'):apply(yaml.safe_load(p.read_text()))
  for group in ([args.only] if args.only else list(groups)):
   selected=[obj for name,obj in rendered.items() if name.startswith(groups[group]+'/')]
-  for obj in sorted(selected,key=lambda x:priority.get(x['kind'],10)):apply(obj)
-  for obj in selected:
-   if obj['kind'] in ('Deployment','DaemonSet'):
-    run(['kubectl','-n',obj['metadata']['namespace'],'rollout','status',obj['kind'].lower()+'/'+obj['metadata']['name'],'--timeout=900s'])
+  workloads=[obj for obj in selected if obj['kind'] in ('Deployment','DaemonSet')]
+  for obj in sorted([x for x in selected if x['kind'] not in ('Deployment','DaemonSet')],key=lambda x:priority.get(x['kind'],10)):apply(obj)
+  # A and B are updated one workload at a time, waiting before the next mutation.
+  for obj in sorted(workloads,key=lambda x:x['metadata']['name']):
+   apply(obj)
+   run(['kubectl','-n',obj['metadata']['namespace'],'rollout','status',obj['kind'].lower()+'/'+obj['metadata']['name'],'--timeout=900s'])
   print('Ready:',group)

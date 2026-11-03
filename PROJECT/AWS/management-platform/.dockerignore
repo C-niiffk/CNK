@@ -1,0 +1,14 @@
+.git
+.github
+.idea
+**/target
+**/__pycache__
+.venv
+.ha-work
+.cicd-work
+terraform
+docs
+**/deploy
+*.zip
+*.pem
+*.key
