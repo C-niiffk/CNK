@@ -53,6 +53,49 @@ def run_id():
 def source_commit():
     return os.environ.get('MP_SOURCE_COMMIT') or os.environ['GITHUB_SHA']
 
+def mask_inputs():
+    """Mask individual configuration values in addition to the complete JSON secret."""
+    if os.environ.get('GITHUB_ACTIONS') != 'true':
+        return
+    values = set()
+    def collect(value):
+        if isinstance(value, dict):
+            for item in value.values(): collect(item)
+        elif isinstance(value, list):
+            for item in value: collect(item)
+        elif isinstance(value, str) and len(value) >= 4:
+            values.add(value)
+            values.update(re.findall(r'(?<![0-9])[0-9]{12}(?![0-9])', value))
+            values.update(re.findall(r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b', value))
+    collect(json.loads(os.environ.get('TF_VARS_JSON', '{}')))
+    for name in ['AWS_ACCOUNT_ID', 'TF_STATE_BUCKET', 'TF_STATE_KEY', 'ARTIFACT_BUCKET']:
+        collect(os.environ.get(name, ''))
+    for value in sorted(values, key=lambda x: (-len(x), x)):
+        escaped = value.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+        print('::add-mask::' + escaped)
+
+def run_private(label, command):
+    """Capture deployment output privately without changing the invoked deployment commands."""
+    prefixes = {'terraform-plan': 'plans/', 'terraform-apply': 'plans/',
+                'deployment': 'releases/logs/'}
+    if label not in prefixes or not command:
+        raise ValueError('Select a private log label and command')
+    if command[0] == '--':
+        command = command[1:]
+    if not command:
+        raise ValueError('A command is required')
+    path = WORK / (label + '.log')
+    fd = os.open(path, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o600)
+    os.chmod(path, 0o600)
+    with os.fdopen(fd, 'w') as stream:
+        result = subprocess.run(command, cwd=ROOT, stdout=stream, stderr=subprocess.STDOUT)
+    key = prefixes[label] + run_id() + '/' + label + '.log'
+    aws('s3api', 'put-object', '--bucket', os.environ['ARTIFACT_BUCKET'], '--key', key,
+        '--body', str(path), '--server-side-encryption', 'AES256')
+    print(label + (': succeeded.' if result.returncode == 0 else ': failed.') + ' Private log saved: ' + key)
+    if result.returncode:
+        raise SystemExit(result.returncode)
+
 def s3_json(key, value=None):
     path = WORK / 'transfer.json'
     bucket = os.environ['ARTIFACT_BUCKET']
@@ -320,6 +363,39 @@ def deploy_vm(bundle, initialize=False):
         print('App2 site', site, 'ready')
 
 
+def empty_artifacts(confirmed_bucket):
+    """Empty only the confirmed, state-managed CI bucket; leave it for Terraform."""
+    meta = json.loads((WORK / 'deployment.json').read_text())
+    expected = os.environ.get('MP_EXPECTED_ACCOUNT_ID', '')
+    if not re.fullmatch(r'[0-9]{12}', expected) or aws('sts', 'get-caller-identity')['Account'] != expected:
+        raise ValueError('Confirm the cleanup account through MP_EXPECTED_ACCOUNT_ID')
+    if os.environ.get('AWS_REGION') != meta['region']:
+        raise ValueError('Cleanup region does not match the deployment')
+    config = json.loads(run(['terraform', '-chdir=terraform', 'output', '-json', 'cicd'], True))
+    backend = json.loads((ROOT / 'terraform/.terraform/terraform.tfstate').read_text())['backend']['config']
+    bucket = config['artifact_bucket']
+    if confirmed_bucket != bucket or bucket == backend['bucket']:
+        raise ValueError('Confirm the CI artifact bucket, never the Terraform state bucket')
+    owner = ['--expected-bucket-owner', expected]
+    versions = aws('s3api', 'list-object-versions', '--bucket', bucket, *owner)
+    rows = versions.get('Versions', []) + versions.get('DeleteMarkers', [])
+    payload = WORK / 'delete-artifact-versions.json'
+    try:
+        for start in range(0, len(rows), 1000):
+            private_json(payload, {'Objects': [{'Key': row['Key'], 'VersionId': row['VersionId']}
+                                              for row in rows[start:start + 1000]], 'Quiet': True})
+            result = aws('s3api', 'delete-objects', '--bucket', bucket,
+                         '--delete', 'file://' + str(payload), *owner)
+            if result.get('Errors'):
+                raise RuntimeError('Artifact deletion failed: ' + json.dumps(result['Errors']))
+    finally:
+        payload.unlink(missing_ok=True)
+    remaining = aws('s3api', 'list-object-versions', '--bucket', bucket, *owner)
+    if remaining.get('Versions') or remaining.get('DeleteMarkers'):
+        raise RuntimeError('Artifact versions still remain; keep the Terraform state')
+    print('ARTIFACTS EMPTIED. Terraform will delete the bucket.')
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest='action', required=True)
@@ -329,6 +405,9 @@ def main():
     c = sub.add_parser('resolve'); c.add_argument('--components', default='[]'); c.add_argument('--rollback', default=''); c.add_argument('--initialize-app2', action='store_true')
     c = sub.add_parser('check-images'); c.add_argument('--components', required=True)
     c = sub.add_parser('deploy-vm'); c.add_argument('--bundle', required=True); c.add_argument('--initialize-empty', action='store_true')
+    c = sub.add_parser('empty-artifacts'); c.add_argument('--confirm-bucket', required=True)
+    sub.add_parser('mask-inputs')
+    c = sub.add_parser('run-private'); c.add_argument('--label', choices=['terraform-plan', 'terraform-apply', 'deployment'], required=True); c.add_argument('command', nargs=argparse.REMAINDER)
     sub.add_parser('verify')
     sub.add_parser('promote')
     c = sub.add_parser('plan'); c.add_argument('operation', choices=['save', 'restore'])
@@ -344,6 +423,9 @@ def main():
     elif a.action == 'check-images': check_images(json.loads(a.components))
     elif a.action == 'deploy-vm': deploy_vm(a.bundle, a.initialize_empty)
     elif a.action == 'verify': verify()
+    elif a.action == 'empty-artifacts': empty_artifacts(a.confirm_bucket)
+    elif a.action == 'mask-inputs': mask_inputs()
+    elif a.action == 'run-private': run_private(a.label, a.command)
     elif a.action == 'prepare': prepare(a.build)
     elif a.action == 'publish': publish(a.component, a.tag)
     elif a.action == 'resolve': resolve(json.loads(a.components), a.rollback, a.initialize_app2)

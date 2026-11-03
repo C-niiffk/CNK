@@ -98,11 +98,14 @@ def prepare(meta, args):
                   delete_on_termination=b['Ebs']['DeleteOnTermination'])
              for res in instances['Reservations'] for i in res['Instances']
              for b in i['BlockDeviceMappings'] if 'Ebs' in b]
+    app2_ids = {host['instance_id'] for host in meta['app2'].values()}
+    key_pairs = sorted({i['KeyName'] for res in instances['Reservations'] for i in res['Instances']
+                        if i['InstanceId'] in app2_ids and i.get('KeyName')})
     pv = json.loads(run('kubectl', 'get', 'pv', '-o', 'json', capture=True))
     pvs = [dict(name=x['metadata']['name'], volume=x['spec'].get('csi', {}).get('volumeHandle'),
                 policy=x['spec'].get('persistentVolumeReclaimPolicy'))
            for x in pv['items'] if x['spec'].get('claimRef', {}).get('namespace') == 'observability']
-    save(INVENTORY, {'name': meta['name'], 'disks': disks, 'pvs': pvs})
+    save(INVENTORY, {'name': meta['name'], 'disks': disks, 'pvs': pvs, 'key_pairs': key_pairs})
     save(CONTEXT, {'account': ident['Account'], 'name': meta['name'], 'region': meta['region'],
                    'bucket': cfg['bucket'], 'key': cfg['key'], 'workspace': workspace,
                    'prepared_at': dt.datetime.now(dt.timezone.utc).isoformat()})
@@ -354,10 +357,13 @@ def cleanup_option_groups(meta):
             raise RuntimeError(f'Option group deletion failed for {name}: {proc.stderr.strip()}')
 
 
-def extras(meta):
+def extras(meta, confirmed_key_pair=None):
+    inv = load(INVENTORY)
+    keys = inv.get('key_pairs', [meta.get('app2', {}).get('a', {}).get('key_name') or 'management-platform-lab'])
+    if any(key != 'management-platform-lab' and key != confirmed_key_pair for key in keys):
+        raise RuntimeError('Confirm the inventoried dedicated key with --confirm-key-pair before deleting it')
     # Snapshot references must be removed BEFORE deleting orphaned option groups.
     cleanup_rds_residuals(meta)
-    inv = load(INVENTORY)
     # Exact instance disk inventory, including retained ES root disks and CSI volumes.
     vids = set(x['volume'] for x in inv['disks']) | set(x['volume'] for x in inv['pvs'] if x.get('volume'))
     for vid in sorted(vids):
@@ -373,10 +379,8 @@ def extras(meta):
         aws('logs', 'delete-log-group', '--log-group-name', group)
         print('Deleted log group:', group)
     # The key was created manually by deployment instructions, not Terraform.
-    key = meta.get('app2', {}).get('a', {}).get('key_name') or 'management-platform-lab'
-    if key != 'management-platform-lab':
-        raise RuntimeError('Unexpected EC2 key pair name; refusing automatic deletion')
-    aws_optional('ec2', 'delete-key-pair', '--key-name', key)
+    for key in keys:
+        aws_optional('ec2', 'delete-key-pair', '--key-name', key)
     # Terraform-managed secrets can be scheduled for deletion. Do not force-delete shared secrets.
     for field in ('runtime_secret_arn', 'redis_secret_arn'):
         arn = meta.get(field)
@@ -422,9 +426,10 @@ def verify(meta):
             sec = aws_optional('secretsmanager', 'describe-secret', '--secret-id', meta[field])
             if sec and not sec.get('DeletedDate'):
                 issues.append('Secret ' + field)
-    key = aws_optional('ec2', 'describe-key-pairs', '--key-names', 'management-platform-lab')
-    if key and key.get('KeyPairs'):
-        issues.append('EC2 key pair')
+    for name in inv.get('key_pairs', ['management-platform-lab']):
+        key = aws_optional('ec2', 'describe-key-pairs', '--key-names', name)
+        if key and key.get('KeyPairs'):
+            issues.append('EC2 key pair ' + name)
     # Enumerate project-tagged resources that could remain after Terraform destroy.
     project = meta['project']
     for label, query in [
@@ -520,6 +525,7 @@ def main():
     p.add_argument('action', choices=['prepare', 'stop', 'ecr', 'database', 'destroy', 'extras', 'verify', 'state-bucket', 'inventory', 'empty-ecr', 'option-groups'])
     p.add_argument('--confirm-project')
     p.add_argument('--confirm-bucket')
+    p.add_argument('--confirm-key-pair', help='extras: exact dedicated key captured by prepare')
 
     args = p.parse_args()
     meta = load(DEPLOY)
@@ -531,7 +537,7 @@ def main():
     if args.action in ('stop', 'ecr', 'database', 'destroy', 'extras', 'state-bucket', 'empty-ecr', 'option-groups'):
         confirm(args, meta)
     actions = {'stop': stop, 'ecr': ecr, 'empty-ecr': ecr, 'database': database,
-               'destroy': destroy, 'extras': extras, 'verify': verify,
+               'destroy': destroy, 'extras': lambda m: extras(m, args.confirm_key_pair), 'verify': verify,
                'inventory': lambda m: print(INVENTORY.read_text()),
                'option-groups': cleanup_rds_residuals,
                'state-bucket': lambda m: state_bucket(m, args)}

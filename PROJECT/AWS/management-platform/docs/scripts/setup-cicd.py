@@ -227,7 +227,8 @@ def select_inputs(args, state, identity):
         variables = {x['name']: x['value'] for x in gh(
             f"repos/{state['repo']}/actions/variables?per_page=100")['variables']}
         if not all(variables.get(name) for name in ['TF_VARS_JSON', 'TF_STATE_BUCKET', 'TF_STATE_KEY']):
-            raise SetupError('Keep existing terraform.tfvars/backend.hcl, or use --new-environment for a new lab.')
+            raise SetupError('GitHub Secrets cannot be downloaded. Restore the original local inputs and backend, '
+                             'or pass --vars with the authoritative file. Use --new-environment only for a new lab.')
         config = json.loads(variables['TF_VARS_JSON'])
         state.setdefault('state_bucket', variables['TF_STATE_BUCKET'])
         state.setdefault('state_key', variables['TF_STATE_KEY'])
@@ -413,18 +414,28 @@ def configure_github(state, config, reviewer, solo):
         contexts = set(checks.get('contexts') or []) | {x['context'] for x in checks.get('checks', [])}
         if not {'checks', 'validate'}.issubset(contexts) or protection.get('required_pull_request_reviews') is None:
             raise SetupError('Keep PRs and the checks/validate status checks required on main; existing branch rules were not overwritten.')
-    variables = dict(AWS_REGION=state['region'], TF_STATE_BUCKET=state['state_bucket'],
-                     TF_STATE_KEY=state['state_key'], ARTIFACT_BUCKET=state['artifact_bucket'],
-                     TF_VARS_JSON=json.dumps(config, separators=(',', ':')),
+    private_values = dict(AWS_ACCOUNT_ID=state['account'], TF_STATE_BUCKET=state['state_bucket'],
+                          TF_STATE_KEY=state['state_key'], ARTIFACT_BUCKET=state['artifact_bucket'],
+                          TF_VARS_JSON=json.dumps(config, separators=(',', ':')))
+    private_values.update({'AWS_' + name.upper() + '_ROLE_ARN': state['roles'][name]
+                           for name in ['plan', 'apply', 'build', 'deploy']})
+    if any(len(value.encode()) > 48 * 1024 for value in private_values.values()):
+        raise SetupError('A private deployment value exceeds the GitHub Secret size limit.')
+    variables = dict(AWS_REGION=state['region'],
                      CODEBUILD_PROJECT=config.get('project', 'management-platform') + '-' +
                      config.get('environment', 'lab') + '-deploy', INFRA_ENABLED='true',
                      INFRA_APPLY_ENABLED='true')
-    variables.update({'AWS_' + name.upper() + '_ROLE_ARN': arn for name, arn in state['roles'].items()})
     previous = {x['name']: x['value'] for x in gh(f'repos/{repo}/actions/variables?per_page=100')['variables']}
     for name in ['PUBLISH_ENABLED', 'DEPLOY_ENABLED']:
         variables[name] = previous.get(name, 'false')
+    # Keep values off argv/history. Remove legacy Variables only after every write succeeds.
+    for name, value in private_values.items():
+        call(['gh', 'secret', 'set', name, '--repo', repo], body=value)
     for name, value in variables.items():
         call(['gh', 'variable', 'set', name, '--repo', repo], body=value)
+    for name in private_values:
+        if name in previous:
+            call(['gh', 'variable', 'delete', name, '--repo', repo])
 
 
 def configure(args):
@@ -559,7 +570,7 @@ def initialize(args):
     instances = [x['instance_id'] for x in deployment['app2'].values()] + list(deployment['es_instances'].values())
     wait_ssm(instances)
     if state.get('new_environment'):
-        from remote import run_command
+        from cicd import run_command
         for instance in instances:
             run_command(instance, ['set -e', 'cloud-init status --wait'])
         for instance in deployment['es_instances'].values():

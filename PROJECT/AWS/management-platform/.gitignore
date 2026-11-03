@@ -20,3 +20,4 @@
 crash.log
 crash.*.log
 **/ci.auto.tfvars.json
+**/cleanup.auto.tfvars

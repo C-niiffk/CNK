@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Offline checks for CI adapters and the original scripts they invoke. No AWS writes."""
 import ast
+from contextlib import redirect_stdout
 import importlib.util
+import io
 import json
 from pathlib import Path
 import re
@@ -22,6 +24,7 @@ def load(name, file):
     return module
 ci = load('cicd_adapter', 'cicd.py')
 setup = load('one_time_setup', 'setup-cicd.py')
+cleanup = load('lab_cleanup', 'cleanup.py')
 
 class Selection(unittest.TestCase):
     def test_shared_sdk_rebuilds_java(self):
@@ -133,6 +136,141 @@ class UnifiedWorkflow(unittest.TestCase):
             for step in job.get('steps', []):
                 if 'run' in step:
                     subprocess.run(['bash', '-n'], input=step['run'], text=True, check=True)
+
+    def test_public_ci_jobs_have_no_private_secret_inputs(self):
+        self.assertNotIn('secrets.', json.dumps(self.workflow.get('env', {})))
+        for name in ['changes', 'checks', 'validate']:
+            self.assertNotIn('secrets.', json.dumps(self.workflow['jobs'][name]), name)
+
+    def test_private_jobs_use_secrets_and_restrict_the_account(self):
+        for name, role in [('plan','PLAN'),('apply','APPLY'),('publish','BUILD'),('deploy','DEPLOY')]:
+            job = self.workflow['jobs'][name]
+            self.assertEqual(job['env']['TF_VARS_JSON'], '${{ secrets.TF_VARS_JSON }}')
+            auth = next(step['with'] for step in job['steps'] if step.get('uses','').startswith('aws-actions/configure-aws-credentials@'))
+            self.assertEqual(auth['role-to-assume'], '${{ secrets.AWS_' + role + '_ROLE_ARN }}')
+            self.assertEqual(auth['allowed-account-ids'], '${{ secrets.AWS_ACCOUNT_ID }}')
+        source=json.dumps(self.workflow)
+        for key in ['TF_STATE_BUCKET','TF_STATE_KEY','ARTIFACT_BUCKET','TF_VARS_JSON',
+                    'AWS_PLAN_ROLE_ARN','AWS_APPLY_ROLE_ARN','AWS_BUILD_ROLE_ARN','AWS_DEPLOY_ROLE_ARN']:
+            self.assertNotIn('vars.'+key, source)
+
+class Privacy(unittest.TestCase):
+    def test_masking_includes_json_fields_account_and_address_without_command_injection(self):
+        output=io.StringIO()
+        values={'allowed_cidrs':['198.51.100.7/32'],
+                'operator_arn':'arn:aws:iam::111111111111:role/operator',
+                'custom':'private\n::notice::not-a-command'}
+        with patch.dict('os.environ',{'GITHUB_ACTIONS':'true','TF_VARS_JSON':json.dumps(values)},clear=True),redirect_stdout(output):
+            ci.mask_inputs()
+        lines=output.getvalue().splitlines()
+        self.assertIn('::add-mask::198.51.100.7/32',lines)
+        self.assertIn('::add-mask::198.51.100.7',lines)
+        self.assertIn('::add-mask::111111111111',lines)
+        self.assertTrue(all(line.startswith('::add-mask::') for line in lines))
+        self.assertTrue(any('%0A::notice::' in line for line in lines))
+
+    def test_local_operation_does_not_print_values_for_github_masking(self):
+        output=io.StringIO()
+        with patch.dict('os.environ',{'GITHUB_ACTIONS':'false','TF_VARS_JSON':'invalid'},clear=True),redirect_stdout(output):
+            ci.mask_inputs()
+        self.assertEqual(output.getvalue(),'')
+
+    def test_private_logs_capture_both_streams_and_preserve_the_exit_code(self):
+        for status in [0,7]:
+            with self.subTest(status=status),tempfile.TemporaryDirectory() as directory:
+                root=Path(directory);output=io.StringIO();uploaded={}
+                def fake_aws(*args):
+                    path=Path(args[args.index('--body')+1])
+                    uploaded.update(key=args[args.index('--key')+1],text=path.read_text(),mode=path.stat().st_mode & 0o777)
+                    return {}
+                command=[sys.executable,'-c',f"import sys; print('private-host'); print('private-error',file=sys.stderr); sys.exit({status})"]
+                with patch.object(ci,'ROOT',root),patch.object(ci,'WORK',root),patch.object(ci,'run_id',return_value='101-1'), \
+                     patch.dict('os.environ',{'ARTIFACT_BUCKET':'private-artifacts'}),patch.object(ci,'aws',side_effect=fake_aws),redirect_stdout(output):
+                    if status:
+                        with self.assertRaises(SystemExit) as error:
+                            ci.run_private('terraform-apply',command)
+                        self.assertEqual(error.exception.code,status)
+                    else:ci.run_private('terraform-apply',command)
+                self.assertIn('private-host',uploaded['text']);self.assertIn('private-error',uploaded['text'])
+                self.assertNotIn('private-host',output.getvalue());self.assertNotIn('private-error',output.getvalue())
+                self.assertEqual(uploaded['mode'],0o600)
+                self.assertEqual(uploaded['key'],'plans/101-1/terraform-apply.log')
+
+    def test_heredoc_deployment_stops_on_failure_and_does_not_print_raw_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);scripts=root/'docs/scripts';scripts.mkdir(parents=True)
+            for name in ['cicd.py','remote.py']:shutil.copy2(ROOT/'docs/scripts'/name,scripts/name)
+            binary=root/'bin';binary.mkdir();aws=binary/'aws'
+            aws.write_text('#!'+sys.executable+'\nprint("{}")\n');aws.chmod(0o700)
+            import os
+            env=dict(os.environ,PATH=str(binary)+os.pathsep+os.environ['PATH'],
+                     GITHUB_RUN_ID='101',GITHUB_RUN_ATTEMPT='1',ARTIFACT_BUCKET='private-artifacts')
+            env.pop('MP_RELEASE_ID',None)
+            result=subprocess.run([sys.executable,str(scripts/'cicd.py'),'run-private','--label','deployment','--','bash','-e','-o','pipefail'],
+                input='echo private-deployment\nfalse\necho must-not-run\n',text=True,capture_output=True,env=env,cwd=root)
+            self.assertEqual(result.returncode,1,result.stderr)
+            self.assertNotIn('private-deployment',result.stdout)
+            log=(root/'.ha-work/deployment.log').read_text()
+            self.assertIn('private-deployment',log);self.assertNotIn('must-not-run',log)
+
+class GitHubSecretSetup(unittest.TestCase):
+    def fixture(self):
+        state={'repo':'demo/platform','account':'111111111111','region':'us-east-1',
+               'state_bucket':'state-bucket','state_key':'platform.tfstate','artifact_bucket':'private-artifacts',
+               'roles':{name:'arn:aws:iam::111111111111:role/'+name for name in ['plan','apply','build','deploy']}}
+        config={'allowed_cidrs':['198.51.100.7/32'],'operator_arn':'arn:operator'}
+        private={'AWS_ACCOUNT_ID','TF_STATE_BUCKET','TF_STATE_KEY','ARTIFACT_BUCKET','TF_VARS_JSON',
+                 'AWS_PLAN_ROLE_ARN','AWS_APPLY_ROLE_ARN','AWS_BUILD_ROLE_ARN','AWS_DEPLOY_ROLE_ARN'}
+        previous={name:'legacy-value' for name in private}
+        previous.update(PUBLISH_ENABLED='true',DEPLOY_ENABLED='false',UNRELATED='keep')
+        def fake_gh(endpoint,**kwargs):
+            if endpoint.startswith('users/'):return {'id':1}
+            if endpoint.endswith('/deployment-branch-policies'):return {'branch_policies':[{'name':'main','type':'branch'}]}
+            if endpoint.endswith('/protection'):
+                return {'required_status_checks':{'contexts':['checks','validate']},'required_pull_request_reviews':{}}
+            if endpoint.endswith('/actions/variables?per_page=100'):
+                return {'variables':[{'name':k,'value':v} for k,v in previous.items()]}
+            return {'deployment_branch_policy':{'custom_branch_policies':True},
+                    'protection_rules':[{'type':'required_reviewers','reviewers':[{'id':1}]}]}
+        return state,config,private,previous,fake_gh
+
+    def test_private_values_are_secrets_and_legacy_variables_are_removed_after_success(self):
+        state,config,private,previous,fake_gh=self.fixture();calls=[]
+        def record(args,**kwargs):calls.append((args,kwargs));return ''
+        with patch.object(setup,'gh',side_effect=fake_gh),patch.object(setup,'call',side_effect=record):
+            setup.configure_github(state,config,'reviewer',True)
+        secrets=[(i,args,kwargs) for i,(args,kwargs) in enumerate(calls) if args[:3]==['gh','secret','set']]
+        self.assertEqual({args[3] for _,args,_ in secrets},private)
+        for _,args,kwargs in secrets:
+            self.assertIsInstance(kwargs['body'],str);self.assertNotIn(kwargs['body'],args)
+        public=[(args,kwargs) for args,kwargs in calls if args[:3]==['gh','variable','set']]
+        self.assertEqual({args[3] for args,_ in public},{'AWS_REGION','CODEBUILD_PROJECT','INFRA_ENABLED',
+                                                      'INFRA_APPLY_ENABLED','PUBLISH_ENABLED','DEPLOY_ENABLED'})
+        self.assertEqual(next(kwargs['body'] for args,kwargs in public if args[3]=='DEPLOY_ENABLED'),'false')
+        deletes=[(i,args[3]) for i,(args,_) in enumerate(calls) if args[:3]==['gh','variable','delete']]
+        self.assertEqual({name for _,name in deletes},private)
+        self.assertGreater(min(i for i,_ in deletes),max(i for i,_,_ in secrets))
+
+    def test_failed_secret_write_keeps_all_legacy_variables(self):
+        state,config,_,_,fake_gh=self.fixture();calls=[]
+        def fail(args,**kwargs):
+            calls.append(args)
+            if args[:4]==['gh','secret','set','TF_VARS_JSON']:raise setup.SetupError('secret write failed')
+            return ''
+        with patch.object(setup,'gh',side_effect=fake_gh),patch.object(setup,'call',side_effect=fail):
+            with self.assertRaisesRegex(setup.SetupError,'secret write failed'):
+                setup.configure_github(state,config,'reviewer',True)
+        self.assertFalse(any(args[:3]==['gh','variable','delete'] for args in calls))
+
+    def test_write_only_secrets_do_not_trigger_new_environment_defaults(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            with patch.object(setup,'TF',root),patch.object(setup,'CONFIG',root/'variables.json'), \
+                 patch.object(setup,'gh',return_value={'variables':[{'name':'AWS_REGION','value':'us-east-1'}]}), \
+                 patch.object(setup,'new_config',side_effect=AssertionError('Existing environment must not get new defaults')):
+                with self.assertRaisesRegex(setup.SetupError,'Secrets cannot be downloaded'):
+                    setup.select_inputs(SimpleNamespace(vars=None,new_environment=False),
+                                        {'repo':'demo/platform','region':'us-east-1'}, {})
 
 class ExistingScripts(unittest.TestCase):
     def test_ci_image_check_does_not_authenticate_or_push(self):
@@ -284,7 +422,116 @@ class ManifestAndSyntax(unittest.TestCase):
                                 self.assertIn(container['image'],refs.values())
             self.assertGreater(count,20)
 
+class CleanupAdapters(unittest.TestCase):
+    def empty(self, confirmed='artifacts', backend='state', actual_account='111111111111', errors=False):
+        self.deletions = []
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);work=root/'.ha-work';work.mkdir()
+            local=root/'terraform/.terraform';local.mkdir(parents=True)
+            (local/'terraform.tfstate').write_text(json.dumps({'backend':{'config':{'bucket':backend}}}))
+            (work/'deployment.json').write_text('{"region":"us-east-1"}')
+            rows={'Versions':[{'Key':'candidates/image','VersionId':str(i)} for i in range(1001)],
+                  'DeleteMarkers':[{'Key':'releases/current.json','VersionId':'marker'}]}
+            lists=0
+            def fake_aws(*args):
+                nonlocal lists
+                if args[0]=='sts':return {'Account':actual_account}
+                self.assertIn('--expected-bucket-owner',args)
+                if args[1]=='list-object-versions':
+                    lists+=1;return rows if lists==1 else {}
+                self.assertEqual(args[1],'delete-objects')
+                payload=Path(args[args.index('--delete')+1].removeprefix('file://'))
+                self.deletions.append(json.loads(payload.read_text()))
+                return {'Errors':[{'Code':'AccessDenied'}]} if errors else {}
+            with patch.object(ci,'ROOT',root),patch.object(ci,'WORK',work), \
+                 patch.dict('os.environ',{'MP_EXPECTED_ACCOUNT_ID':'111111111111','AWS_REGION':'us-east-1'}), \
+                 patch.object(ci,'aws',side_effect=fake_aws), \
+                 patch.object(ci,'run',return_value='{"artifact_bucket":"artifacts"}'):
+                ci.empty_artifacts(confirmed)
+            self.assertFalse((work/'delete-artifact-versions.json').exists())
+
+    def test_versioned_artifacts_include_delete_markers_and_use_bounded_batches(self):
+        self.empty()
+        self.assertEqual([len(item['Objects']) for item in self.deletions],[1000,2])
+        self.assertIn({'Key':'releases/current.json','VersionId':'marker'},self.deletions[-1]['Objects'])
+
+    def test_artifact_cleanup_cannot_target_the_state_or_an_unconfirmed_bucket(self):
+        for options in [{'confirmed':'another-bucket'},{'backend':'artifacts'}]:
+            with self.subTest(options=options),self.assertRaisesRegex(ValueError,'never the Terraform state'):
+                self.empty(**options)
+            self.assertEqual(self.deletions,[])
+
+    def test_artifact_cleanup_rejects_a_different_account(self):
+        with self.assertRaisesRegex(ValueError,'cleanup account'):
+            self.empty(actual_account='222222222222')
+        self.assertEqual(self.deletions,[])
+
+    def test_per_object_s3_failure_stops_artifact_cleanup(self):
+        with self.assertRaisesRegex(RuntimeError,'AccessDenied'):
+            self.empty(errors=True)
+        self.assertEqual(len(self.deletions),1)
+
+    def test_prepare_records_the_actual_application_key(self):
+        meta={'name':'management-platform-lab','region':'us-east-1',
+              'es_instances':{'a':'i-es'},'app2':{'a':{'instance_id':'i-app'}}}
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);tf=root/'terraform';(tf/'.terraform').mkdir(parents=True)
+            (tf/'.terraform/terraform.tfstate').write_text(json.dumps({'backend':{'type':'s3','config':{
+                'bucket':'state','key':'management-platform/lab/terraform.tfstate','region':'us-east-1'}}}))
+            def fake_tf(*args,**kwargs):return 'default' if args[0]=='workspace' else '{}'
+            instances={'Reservations':[{'Instances':[
+                {'InstanceId':'i-app','KeyName':'ci-setup','BlockDeviceMappings':[]},
+                {'InstanceId':'i-es','KeyName':'unrelated-es-key','BlockDeviceMappings':[]}]}]}
+            with patch.object(cleanup,'TF',tf),patch.object(cleanup,'WORK',root), \
+                 patch.object(cleanup,'CONTEXT',root/'context.json'),patch.object(cleanup,'INVENTORY',root/'inventory.json'), \
+                 patch.dict('os.environ',{'MP_EXPECTED_ACCOUNT_ID':'111111111111'}), \
+                 patch.object(cleanup,'check_identity',return_value={'Account':'111111111111'}), \
+                 patch.object(cleanup,'tf',side_effect=fake_tf),patch.object(cleanup,'aws',return_value=instances), \
+                 patch.object(cleanup,'run',return_value='{"items":[]}'):
+                cleanup.prepare(meta,SimpleNamespace())
+            self.assertEqual(json.loads((root/'inventory.json').read_text())['key_pairs'],['ci-setup'])
+
+    def test_nonlegacy_key_requires_confirmation_and_deletes_only_the_inventory_key(self):
+        inventory={'disks':[],'pvs':[],'key_pairs':['ci-setup']}
+        with patch.object(cleanup,'load',return_value=inventory),patch.object(cleanup,'cleanup_rds_residuals') as rds, \
+             patch.object(cleanup,'project_log_groups',return_value=[]),patch.object(cleanup,'aws_optional') as aws:
+            with self.assertRaisesRegex(RuntimeError,'confirm-key-pair'):
+                cleanup.extras({})
+            rds.assert_not_called();aws.assert_not_called()
+            cleanup.extras({},confirmed_key_pair='ci-setup')
+            aws.assert_called_once_with('ec2','delete-key-pair','--key-name','ci-setup')
+
+    def test_cleanup_verification_checks_the_inventory_key(self):
+        meta={'name':'management-platform-lab','project':'management-platform','environment':'lab',
+              'cluster_name':'cluster','app2':{},'es_instances':{},'ecr':{}}
+        with patch.object(cleanup,'tf',return_value='{}'), \
+             patch.object(cleanup,'load',return_value={'disks':[],'pvs':[],'key_pairs':['ci-setup']}), \
+             patch.object(cleanup,'aws',return_value={}),patch.object(cleanup,'aws_optional',return_value=None) as aws:
+            cleanup.verify(meta)
+        keys=[call.args[-1] for call in aws.call_args_list if call.args[:2]==('ec2','describe-key-pairs')]
+        self.assertEqual(keys,['ci-setup'])
+
 class OneTimeSetup(unittest.TestCase):
+    def test_new_environment_initialization_uses_the_ci_ssm_helper(self):
+        deployment={'cluster_name':'cluster','app2':{'a':{'instance_id':'i-a'},'b':{'instance_id':'i-b'}},
+                    'es_instances':{'a':'i-es-a','b':'i-es-b'},'db':{'management':{'secret_arn':'database'}}}
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);key=root/'setup.pem';key.write_text('test')
+            state={'repo':'demo/platform','artifact_bucket':'artifacts','region':'us-east-1','new_environment':True}
+            def fake_call(args,**kwargs):
+                if args[:4]==['terraform','-chdir=terraform','output','-json']:
+                    return json.dumps(deployment if args[4]=='deployment' else {'artifact_bucket':'artifacts'})
+                return ''
+            with patch.object(setup,'context',return_value=(state,{})),patch.object(setup,'prepare_local'), \
+                 patch.object(setup,'require_tools'),patch.object(setup,'wait_ssm'), \
+                 patch.object(setup,'HA',root),patch.object(setup,'SETTINGS',root/'setup.json'), \
+                 patch.object(setup,'call',side_effect=fake_call) as calls, \
+                 patch.dict(sys.modules,{'cicd':ci}),patch.object(ci,'run_command') as ssm:
+                setup.initialize(SimpleNamespace(key=str(key)))
+            self.assertEqual(ssm.call_count,6)
+            self.assertTrue(state['initialized'])
+            self.assertTrue(any('docs/scripts/init-db.py' in call.args[0] for call in calls.call_args_list))
+
     def test_release_dispatches_the_application_path_in_the_single_workflow(self):
         state = {'repo':'demo/platform','artifact_bucket':'artifacts','initialized':True}
         with patch.object(setup,'context',return_value=(state,{})), \
